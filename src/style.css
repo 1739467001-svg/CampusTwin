@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-navy: #0e3a67;
+  --color-brand-gold: #9c7720;
+  --color-brand-blue: #1e6fdb;
+  --color-surface: #f5f7fa;
+  --color-surface-dark: #0f172a;
+  --color-text-primary: #1f2937;
+  --color-text-secondary: #6b7280;
+  --color-status-free: #10b981;
+  --color-status-busy: #6b7280;
+  --color-status-repair: #ef4444;
+  --color-status-hit: #3b82f6;
+}
+
+html, body, #app {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Inter', 'PingFang SC', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
