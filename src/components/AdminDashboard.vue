@@ -64,7 +64,8 @@ function initOccupancyChart() {
 
 function updateOccupancyChart() {
   if (!occupancyChart) return
-  const data = buildingOccupancy.value
+  const data = buildingOccupancy.value || []
+  if (!data.length) return
   occupancyChart.setOption({
     grid: { left: 8, right: 40, top: 8, bottom: 8, containLabel: true },
     xAxis: {
@@ -110,7 +111,9 @@ function initEnergyChart() {
 
 function updateEnergyChart() {
   if (!energyChart) return
-  const series = energyTrend.value.map((s, i) => ({
+  const trend = energyTrend.value || []
+  if (!trend.length) return
+  const series = trend.map((s, i) => ({
     name: s.name,
     type: 'line', smooth: true, symbol: 'circle', symbolSize: 4,
     data: s.data,
@@ -129,8 +132,8 @@ function updateEnergyChart() {
 
   energyChart.setOption({
     grid: { left: 8, right: 8, top: 24, bottom: 24, containLabel: true },
-    legend: { data: energyTrend.value.map(s => s.name), top: 0, textStyle: { fontSize: 10, color: '#6b7280' }, itemWidth: 10, itemHeight: 6 },
-    xAxis: { type: 'category', data: energyTrend.value[0]?.hours || [], axisLabel: { fontSize: 10, color: '#9ca3af' }, axisLine: { lineStyle: { color: '#e5e7eb' } }, axisTick: { show: false } },
+    legend: { data: trend.map(s => s.name), top: 0, textStyle: { fontSize: 10, color: '#6b7280' }, itemWidth: 10, itemHeight: 6 },
+    xAxis: { type: 'category', data: trend[0]?.hours || [], axisLabel: { fontSize: 10, color: '#9ca3af' }, axisLine: { lineStyle: { color: '#e5e7eb' } }, axisTick: { show: false } },
     yAxis: { type: 'value', axisLabel: { fontSize: 10, color: '#9ca3af' }, splitLine: { lineStyle: { color: '#e5e7eb', type: 'dashed' } }, axisLine: { show: false }, axisTick: { show: false } },
     series,
     tooltip: { trigger: 'axis', backgroundColor: 'rgba(255,255,255,0.95)', borderColor: '#e5e7eb', textStyle: { color: '#1f2937' }, axisPointer: { type: 'line', lineStyle: { color: '#cbd5e1' } } },
@@ -150,7 +153,8 @@ function initTrafficChart() {
 
 function updateTrafficChart() {
   if (!trafficChart) return
-  const data = trafficDistribution.value
+  const data = trafficDistribution.value || []
+  if (!data.length) return
   trafficChart.setOption({
     color: ['#0e3a67', '#1e6fdb', '#9c7720', '#10b981', '#d4a853'],
     series: [{
