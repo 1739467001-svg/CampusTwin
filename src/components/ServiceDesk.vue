@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useCampusStore } from '../stores/campus'
+import AdminDashboard from './AdminDashboard.vue'
 
 const store = useCampusStore()
 
@@ -132,38 +133,7 @@ function submitRepair(roomId: string, deviceType: string) {
 
       <!-- 管理态势面板 -->
       <div v-else-if="store.activePanel === 'admin'" class="space-y-4">
-        <!-- KPI 卡 -->
-        <div class="grid grid-cols-2 gap-2">
-          <div class="p-3 rounded-xl bg-brand-navy/5 border border-brand-navy/10">
-            <div class="text-[10px] text-text-secondary">全校占用率</div>
-            <div class="text-xl font-bold text-brand-navy mt-0.5">{{ store.occupancyRate }}%</div>
-          </div>
-          <div class="p-3 rounded-xl bg-brand-gold/5 border border-brand-gold/10">
-            <div class="text-[10px] text-text-secondary">今日能耗</div>
-            <div class="text-xl font-bold text-brand-gold mt-0.5">{{ store.energies.reduce((s, e) => s + e.kwh, 0) }} <span class="text-xs font-normal">kWh</span></div>
-          </div>
-          <div class="p-3 rounded-xl bg-status-free/5 border border-status-free/10">
-            <div class="text-[10px] text-text-secondary">实时人流</div>
-            <div class="text-xl font-bold text-status-free mt-0.5">{{ store.traffics.reduce((s, t) => s + t.count, 0) }}</div>
-          </div>
-          <div class="p-3 rounded-xl bg-status-repair/5 border border-status-repair/10">
-            <div class="text-[10px] text-text-secondary">待处理工单</div>
-            <div class="text-xl font-bold text-status-repair mt-0.5">{{ store.tickets.filter(t => t.status !== 'done').length }}</div>
-          </div>
-        </div>
-        <!-- 能耗排行 -->
-        <div>
-          <div class="text-xs text-text-secondary font-medium mb-2">能耗排行</div>
-          <div class="space-y-2">
-            <div v-for="e in store.energies" :key="e.buildingId" class="flex items-center gap-2">
-              <span class="text-xs text-text-secondary w-20 truncate">{{ store.buildings.find(b => b.id === e.buildingId)?.name || e.buildingId }}</span>
-              <div class="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
-                <div class="h-full rounded-full bg-brand-gold/60" :style="{ width: Math.min(100, (e.kwh / 1500) * 100) + '%' }"></div>
-              </div>
-              <span class="text-xs text-text-secondary w-10 text-right">{{ e.kwh }}</span>
-            </div>
-          </div>
-        </div>
+        <AdminDashboard />
       </div>
 
       <!-- 导航面板（占位） -->
