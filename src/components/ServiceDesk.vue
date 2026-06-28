@@ -107,6 +107,15 @@ function submitRepair(roomId: string, deviceType: string) {
 
       <!-- 师生端视图 -->
       <template v-else>
+        <!-- 新生/无障碍提示条 -->
+        <div v-if="store.accessibilityMode" class="mb-3 p-2.5 rounded-lg bg-brand-navy/5 border border-brand-navy/10 flex items-center gap-2">
+          <svg class="w-4 h-4 text-brand-navy" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+          </svg>
+          <span class="text-[11px] text-brand-navy font-medium">新生友好模式已开启</span>
+          <span class="text-[10px] text-text-secondary ml-auto">字号放大 · 操作高亮</span>
+        </div>
+
         <!-- 默认空态 -->
         <div v-if="store.activePanel === 'none'" class="text-center py-12">
           <div class="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center mx-auto mb-3">
@@ -172,6 +181,23 @@ function submitRepair(roomId: string, deviceType: string) {
           导航功能将在后续版本接入
         </div>
       </template>
+    </div>
+
+    <!-- 底部工具栏：无障碍开关 -->
+    <div class="shrink-0 px-4 py-2 border-t border-gray-100 flex items-center justify-between bg-white">
+      <div class="flex items-center gap-1.5">
+        <button
+          @click="store.setAccessibilityMode(!store.accessibilityMode)"
+          :class="['flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition border', store.accessibilityMode ? 'bg-brand-navy/5 border-brand-navy/20 text-brand-navy' : 'bg-gray-50 border-gray-200 text-text-secondary hover:bg-gray-100']"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 001.5-.189m-1.5.189a6.01 6.01 0 01-1.5-.189m3.75 7.478a12.06 12.06 0 01-4.5 0m3.75 2.383a14.406 14.406 0 01-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 10-7.517 0c.85.493 1.509 1.333 1.509 2.316V18" />
+          </svg>
+          {{ store.accessibilityMode ? '新生友好模式开' : '新生友好模式' }}
+        </button>
+        <span class="text-[10px] text-text-secondary/50">{{ store.accessibilityMode ? '字号已放大' : '点击放大字号' }}</span>
+      </div>
+      <div class="text-[10px] text-text-secondary/40">诚毅勤朴 · 浙江工商大学</div>
     </div>
   </div>
 </template>

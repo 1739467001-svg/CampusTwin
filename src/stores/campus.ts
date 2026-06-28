@@ -105,6 +105,11 @@ export const useCampusStore = defineStore('campus', () => {
   const heatmapMode = ref<HeatmapMode>('off')
   const focusBuildingId = ref<string | null>(null)
 
+  // === U2: 社会价值 ===
+  const todayCompleted = ref(127)  // 今日已办件数
+  const avgTimeSeconds = ref(9)    // 平均处理秒数
+  const accessibilityMode = ref(false)  // 无障碍/新生模式
+
   // === Getters ===
   const allRooms = computed(() => {
     const rooms: Room[] = []
@@ -283,13 +288,26 @@ export const useCampusStore = defineStore('campus', () => {
   // 初始化
   initMockData()
 
+  function setAccessibilityMode(enabled: boolean) {
+    accessibilityMode.value = enabled
+  }
+
+  function incrementCompleted() {
+    todayCompleted.value += 1
+  }
+
+  // 初始化
+  initMockData()
+
   return {
     buildings, devices, bookings, tickets, energies, traffics,
     currentUser, messages, activePanel, highlightedRoomIds, selectedBuildingId,
     viewMode, heatmapMode, focusBuildingId,
+    todayCompleted, avgTimeSeconds, accessibilityMode,
     allRooms, freeRooms, occupancyRate, classroomOccupancyRate, meetingOccupancyRate,
     totalEnergy, totalTraffic, buildingOccupancyData,
     addMessage, setActivePanel, highlightRooms, setViewMode, setHeatmapMode, setFocusBuilding,
+    setAccessibilityMode, incrementCompleted,
     bookRoom, createTicket, initMockData
   }
 })
