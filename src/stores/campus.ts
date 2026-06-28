@@ -83,6 +83,8 @@ export interface Intent {
 
 // 右栏面板类型
 export type PanelType = 'booking' | 'repair' | 'navigate' | 'admin' | 'none'
+export type ViewMode = 'student' | 'admin'
+export type HeatmapMode = 'energy' | 'traffic' | 'off'
 
 export const useCampusStore = defineStore('campus', () => {
   // === State ===
@@ -99,6 +101,9 @@ export const useCampusStore = defineStore('campus', () => {
   const activePanel = ref<PanelType>('none')
   const highlightedRoomIds = ref<string[]>([])
   const selectedBuildingId = ref<string | null>(null)
+  const viewMode = ref<ViewMode>('student')
+  const heatmapMode = ref<HeatmapMode>('off')
+  const focusBuildingId = ref<string | null>(null)
 
   // === Getters ===
   const allRooms = computed(() => {
@@ -114,6 +119,42 @@ export const useCampusStore = defineStore('campus', () => {
     if (!total) return 0
     const busy = allRooms.value.filter(r => r.status === 'busy').length
     return Math.round((busy / total) * 100)
+  })
+
+  // 教室占用率
+  const classroomOccupancyRate = computed(() => {
+    const rooms = allRooms.value.filter(r => r.type === 'classroom')
+    if (!rooms.length) return 0
+    return Math.round((rooms.filter(r => r.status === 'busy').length / rooms.length) * 100)
+  })
+
+  // 会议室占用率
+  const meetingOccupancyRate = computed(() => {
+    const rooms = allRooms.value.filter(r => r.type === 'meeting')
+    if (!rooms.length) return 0
+    return Math.round((rooms.filter(r => r.status === 'busy').length / rooms.length) * 100)
+  })
+
+  // 今日总能耗
+  const totalEnergy = computed(() => energies.value.reduce((s, e) => s + e.kwh, 0))
+
+  // 当前在校人流
+  const totalTraffic = computed(() => traffics.value.reduce((s, t) => s + t.count, 0))
+
+  // 各楼占用率（给图表用）
+  const buildingOccupancyData = computed(() => {
+    return buildings.value.map(b => {
+      const rooms = b.floors.flatMap(f => f.rooms)
+      const busy = rooms.filter(r => r.status === 'busy').length
+      const total = rooms.length
+      return {
+        buildingId: b.id,
+        name: b.name,
+        rate: total > 0 ? Math.round((busy / total) * 100) : 0,
+        total,
+        busy,
+      }
+    }).sort((a, b) => b.rate - a.rate)
   })
 
   // === Actions ===
@@ -199,6 +240,26 @@ export const useCampusStore = defineStore('campus', () => {
     highlightedRoomIds.value = ids
   }
 
+  function setViewMode(mode: ViewMode) {
+    viewMode.value = mode
+  }
+
+  function setHeatmapMode(mode: HeatmapMode) {
+    heatmapMode.value = mode
+  }
+
+  function setFocusBuilding(buildingId: string | null) {
+    focusBuildingId.value = buildingId
+    // 3 秒后自动取消聚焦
+    if (buildingId) {
+      setTimeout(() => {
+        if (focusBuildingId.value === buildingId) {
+          focusBuildingId.value = null
+        }
+      }, 3000)
+    }
+  }
+
   function bookRoom(roomId: string, start: string, end: string) {
     const room = allRooms.value.find(r => r.id === roomId)
     if (!room) return false
@@ -225,7 +286,10 @@ export const useCampusStore = defineStore('campus', () => {
   return {
     buildings, devices, bookings, tickets, energies, traffics,
     currentUser, messages, activePanel, highlightedRoomIds, selectedBuildingId,
-    allRooms, freeRooms, occupancyRate,
-    addMessage, setActivePanel, highlightRooms, bookRoom, createTicket, initMockData
+    viewMode, heatmapMode, focusBuildingId,
+    allRooms, freeRooms, occupancyRate, classroomOccupancyRate, meetingOccupancyRate,
+    totalEnergy, totalTraffic, buildingOccupancyData,
+    addMessage, setActivePanel, highlightRooms, setViewMode, setHeatmapMode, setFocusBuilding,
+    bookRoom, createTicket, initMockData
   }
 })

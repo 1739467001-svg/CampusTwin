@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useCampusStore } from '../stores/campus'
 import { CampusScene, type RoomInfoCard } from '../three/scene'
 
@@ -60,6 +60,41 @@ watch(() => store.allRooms.map(r => ({ id: r.id, status: r.status })), (changes)
     scene.updateRoomStatus(id, status)
   })
 }, { deep: true })
+
+// 监听热力模式变化 → 更新 3D 热力层
+watch(() => store.heatmapMode, (mode) => {
+  if (!scene) return
+  if (mode === 'off') {
+    scene.clearHeatMap()
+    return
+  }
+  const heatData = new Map<string, number>()
+  store.allRooms.forEach(room => {
+    if (mode === 'energy') {
+      // 按楼栋能耗分配到各房间
+      const buildingEnergy = store.energies.find(e => e.buildingId === room.floorId.split('-')[0])?.kwh || 500
+      const floorsInBuilding = store.buildings.find(b => b.id === room.floorId.split('-')[0])?.floors.length || 1
+      const roomsInFloor = store.buildings
+        .find(b => b.id === room.floorId.split('-')[0])
+        ?.floors.find(f => f.id === room.floorId)?.rooms.length || 1
+      const perRoom = buildingEnergy / (floorsInBuilding * roomsInFloor)
+      const busy = room.status === 'busy' ? 1.5 : room.status === 'repair' ? 0.8 : 0.3
+      heatData.set(room.id, Math.min(1, (perRoom / 200) * busy))
+    } else if (mode === 'traffic') {
+      // 按楼栋人流分配到各房间
+      const traffic = store.traffics.find(t => t.zoneId === room.floorId.split('-')[0])?.count || 100
+      const busy = room.status === 'busy' ? 1.2 : 0.3
+      heatData.set(room.id, Math.min(1, (traffic / 500) * busy))
+    }
+  })
+  scene.updateHeatMap(heatData)
+})
+
+// 监听聚焦楼宇 → 相机飞过去
+watch(() => store.focusBuildingId, (buildingId) => {
+  if (!scene || !buildingId) return
+  scene.focusBuilding(buildingId)
+})
 
 onUnmounted(() => {
   if (scene) {

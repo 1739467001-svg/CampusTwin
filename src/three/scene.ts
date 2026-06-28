@@ -46,6 +46,17 @@ export class CampusScene {
   private selectedRoomId: string | null = null
   private highlightedIds: Set<string> = new Set()
 
+  // 热力层
+  private heatMapData: Map<string, number> = new Map()
+  private heatOverlayMeshes: Map<string, THREE.Mesh> = new Map()
+
+  // 聚焦动画
+  private focusTarget: THREE.Vector3 | null = null
+  private focusCameraPos: THREE.Vector3 | null = null
+  private focusProgress = 0
+  private focusStartCamPos = new THREE.Vector3()
+  private focusStartTarget = new THREE.Vector3()
+
   // 回调
   onRoomHover: ((info: RoomInfoCard | null) => void) | null = null
   onRoomClick: ((info: RoomInfoCard | null) => void) | null = null
@@ -111,6 +122,7 @@ export class CampusScene {
     // === 动画循环 ===
     const animate = () => {
       this.animationId = requestAnimationFrame(animate)
+      this.updateFocusAnimation()
       this.controls.update()
       this.renderer.render(this.scene, this.camera)
     }
@@ -452,6 +464,117 @@ export class CampusScene {
     }
   }
 
+  // === 聚焦楼宇 ===
+  focusBuilding(buildingId: string) {
+    const group = this.buildingMeshes.get(buildingId)
+    if (!group) return
+
+    const worldPos = new THREE.Vector3()
+    group.getWorldPosition(worldPos)
+
+    let maxY = 0
+    group.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const box = new THREE.Box3().setFromObject(child)
+        if (box.max.y > maxY) maxY = box.max.y
+      }
+    })
+
+    this.focusStartCamPos.copy(this.camera.position)
+    this.focusStartTarget.copy(this.controls.target)
+
+    this.focusTarget = new THREE.Vector3(worldPos.x, maxY / 2, worldPos.z)
+    this.focusCameraPos = new THREE.Vector3(
+      worldPos.x + 30,
+      maxY + 15,
+      worldPos.z + 30
+    )
+    this.focusProgress = 0
+  }
+
+  private updateFocusAnimation() {
+    if (!this.focusTarget || !this.focusCameraPos) return
+    this.focusProgress += 0.02
+    if (this.focusProgress >= 1) {
+      this.focusProgress = 1
+    }
+    const t = this.easeInOutCubic(this.focusProgress)
+    this.camera.position.lerpVectors(this.focusStartCamPos, this.focusCameraPos, t)
+    this.controls.target.lerpVectors(this.focusStartTarget, this.focusTarget, t)
+    if (this.focusProgress >= 1) {
+      this.focusTarget = null
+      this.focusCameraPos = null
+    }
+  }
+
+  private easeInOutCubic(t: number): number {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+  }
+
+  // === 热力层 ===
+  updateHeatMap(data: Map<string, number>) {
+    this.heatMapData = data
+    this.clearHeatOverlays()
+
+    this.heatMapData.forEach((value, roomId) => {
+      const roomMesh = this.roomMeshMap.get(roomId)
+      if (!roomMesh) return
+
+      const color = this.heatValueToColor(value)
+      const params = (roomMesh.geometry as THREE.BoxGeometry).parameters
+
+      const overlayGeo = new THREE.BoxGeometry(
+        params.width + 0.2,
+        params.height + 0.2,
+        params.depth + 0.2
+      )
+      const overlayMat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: Math.max(0.05, value * 0.45),
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+      const overlay = new THREE.Mesh(overlayGeo, overlayMat)
+      overlay.position.copy(roomMesh.position)
+      overlay.renderOrder = 1
+
+      roomMesh.parent?.add(overlay)
+      this.heatOverlayMeshes.set(roomId, overlay)
+    })
+  }
+
+  private heatValueToColor(value: number): number {
+    const clamped = Math.max(0, Math.min(1, value))
+    if (clamped < 0.5) {
+      const t = clamped / 0.5
+      const r = Math.round(0x3b + (0xea - 0x3b) * t)
+      const g = Math.round(0x82 + (0xb3 - 0x82) * t)
+      const b = Math.round(0xf6 + (0x08 - 0xf6) * t)
+      return (r << 16) | (g << 8) | b
+    } else {
+      const t = (clamped - 0.5) / 0.5
+      const r = Math.round(0xea + (0xef - 0xea) * t)
+      const g = Math.round(0xb3 + (0x44 - 0xb3) * t)
+      const b = Math.round(0x08 + (0x44 - 0x08) * t)
+      return (r << 16) | (g << 8) | b
+    }
+  }
+
+  clearHeatMap() {
+    this.heatMapData.clear()
+    this.clearHeatOverlays()
+  }
+
+  private clearHeatOverlays() {
+    this.heatOverlayMeshes.forEach((mesh) => {
+      mesh.geometry.dispose()
+      ;(mesh.material as THREE.Material).dispose()
+      mesh.parent?.remove(mesh)
+    })
+    this.heatOverlayMeshes.clear()
+  }
+
   // === 高亮 API ===
   highlightRooms(roomIds: string[]) {
     this.highlightedIds = new Set(roomIds)
@@ -486,6 +609,7 @@ export class CampusScene {
   // === 清理 ===
   dispose() {
     cancelAnimationFrame(this.animationId)
+    this.clearHeatOverlays()
     this.renderer.dispose()
     this.scene.traverse((obj) => {
       if ((obj as THREE.Mesh).geometry) {
