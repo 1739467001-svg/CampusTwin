@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useCampusStore } from '../stores/campus'
 import { CampusScene, type RoomInfoCard } from '../three/scene'
 
@@ -57,7 +57,7 @@ watch(() => store.highlightedRoomIds, (ids) => {
 watch(() => store.allRooms.map(r => ({ id: r.id, status: r.status })), (changes) => {
   if (!scene) return
   changes.forEach(({ id, status }) => {
-    scene.updateRoomStatus(id, status)
+    scene!.updateRoomStatus(id, status)
   })
 }, { deep: true })
 
@@ -131,7 +131,7 @@ function closeInfoCard() {
     <div
       v-if="clickInfo"
       class="fixed z-[9999] w-56 rounded-xl bg-[#111827]/95 backdrop-blur-md border border-white/10 shadow-2xl overflow-hidden"
-      :style="{ left: Math.min(clickInfo.screenX + 16, window.innerWidth - 240) + 'px', top: Math.min(clickInfo.screenY - 20, window.innerHeight - 200) + 'px' }"
+      :style="{ left: clickInfo.screenX + 16 + 'px', top: clickInfo.screenY - 20 + 'px' }"
     >
       <!-- 头部 -->
       <div class="px-3 py-2.5 bg-white/5 border-b border-white/5 flex items-center justify-between">

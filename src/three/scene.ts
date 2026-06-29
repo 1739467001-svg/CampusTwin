@@ -324,7 +324,7 @@ export class CampusScene {
     })
   }
 
-  private addWindows(group: THREE.Group, cx: number, baseY: number, w: number, h: number, d: number) {
+  private addWindows(group: THREE.Group, cx: number, baseY: number, _w: number, _h: number, d: number) {
     const windowMat = new THREE.MeshStandardMaterial({
       color: 0xffe8a0,
       emissive: 0xffcc44,
@@ -345,12 +345,6 @@ export class CampusScene {
   }
 
   private getRoomColor(status: RoomStatus): number {
-    if (this.highlightedIds.size > 0 && this.roomDataMap) {
-      // 检查所有 room 是否在 highlighted 中
-      for (const [id, room] of this.roomDataMap) {
-        if (this.highlightedIds.has(id)) continue
-      }
-    }
     return STATUS_COLORS[status] || 0x10b981
   }
 
@@ -366,12 +360,7 @@ export class CampusScene {
 
     // 清除旧 hover
     if (this.hoveredMesh) {
-      const rid = this.hoveredMesh.userData.roomId
-      const room = this.roomDataMap.get(rid)
-      if (room) {
-        const color = this.highlightedIds.has(rid) ? HIT_COLOR : STATUS_COLORS[room.status]
-        ;(this.hoveredMesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000)
-      }
+      ;(this.hoveredMesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000)
       this.hoveredMesh = null
     }
 
@@ -445,9 +434,6 @@ export class CampusScene {
 
     const typeLabels: Record<string, string> = {
       meeting: '会议室', classroom: '教室', venue: '场馆', lab: '实验室'
-    }
-    const statusLabels: Record<RoomStatus, string> = {
-      free: '空闲', busy: '占用', repair: '报修'
     }
 
     return {
