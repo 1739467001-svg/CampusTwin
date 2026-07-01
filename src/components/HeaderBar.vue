@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useCampusStore } from '../stores/campus'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 
 const store = useCampusStore()
 const animatedCount = ref(0)
@@ -17,6 +17,23 @@ onMounted(() => {
     if (p < 1) requestAnimationFrame(tick)
   }
   requestAnimationFrame(tick)
+})
+
+const timeLabel = computed(() => {
+  const h = store.simulatedHour
+  if (h < 6) return '凌晨'
+  if (h < 9) return '早晨'
+  if (h < 12) return '上午'
+  if (h < 14) return '中午'
+  if (h < 17) return '下午'
+  if (h < 19) return '傍晚'
+  return '晚间'
+})
+
+const timeIcon = computed(() => {
+  const h = store.simulatedHour
+  if (h >= 6 && h < 18) return 'sun'
+  return 'moon'
 })
 
 const values = [
@@ -43,6 +60,19 @@ const values = [
         </div>
       </div>
       <div class="flex items-center gap-4 text-xs" style="color: rgba(255,255,255,0.65);">
+        <!-- 模拟时间 -->
+        <div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-md" style="background: rgba(255,255,255,0.08);">
+          <svg v-if="timeIcon === 'sun'" class="w-3.5 h-3.5" style="color: #c9a84c;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+          </svg>
+          <svg v-else class="w-3.5 h-3.5" style="color: #c9a84c;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
+          </svg>
+          <span class="text-[10px]">{{ timeLabel }}</span>
+          <span class="font-semibold tabular-nums text-white">{{ String(store.simulatedHour).padStart(2, '0') }}:00</span>
+        </div>
+
+        <!-- 今日已办 -->
         <div class="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-md" style="background: rgba(255,255,255,0.08);">
           <span class="text-[10px]">今日已办</span>
           <span class="font-semibold tabular-nums text-white">{{ animatedCount }}</span>
@@ -69,8 +99,3 @@ const values = [
     </div>
   </div>
 </template>
-
-<style>
-.scrollbar-hide::-webkit-scrollbar { display: none; }
-.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-</style>

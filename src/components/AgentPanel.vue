@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, computed } from 'vue'
 import { useCampusStore } from '../stores/campus'
 import { parseIntent } from '../agent/intentParser'
 
@@ -14,6 +14,33 @@ const tipTexts = [
   '三号楼302投影坏了',
   '看一下全校占用情况'
 ]
+
+// 根据 simulatedHour 生成时间问候语
+const timeGreeting = computed(() => {
+  const hour = store.simulatedHour ?? 10
+  if (hour < 6) return '凌晨'
+  if (hour < 9) return '早晨'
+  if (hour < 12) return '上午'
+  if (hour < 14) return '中午'
+  if (hour < 18) return '下午'
+  if (hour < 22) return '晚上'
+  return '深夜'
+})
+
+const timePeriod = computed(() => {
+  const hour = store.simulatedHour ?? 10
+  if (hour < 8) return '校园安静，大部分教室尚未开放。'
+  if (hour < 12) return '大部分教室正在上课中。'
+  if (hour < 14) return '午休时间，部分教室已空闲。'
+  if (hour < 18) return '下午课程进行中，教室使用率较高。'
+  if (hour < 21) return '晚间时段，自习室与研讨室较为热门。'
+  return '已过晚自习时间，大部分教室已关闭。'
+})
+
+// 初始欢迎消息（含时间信息）
+const welcomeMessage = computed(() => {
+  return `你好！我是 CampusTwin 调度助手。现在是${timeGreeting.value}${store.simulatedHour ?? 10}点，${timePeriod.value}试试说「帮我订明天下午有投影的会议室」或「三号楼302投影坏了」。`
+})
 
 function sendMessage() {
   const text = inputText.value.trim()
@@ -34,24 +61,56 @@ function sendMessage() {
     isTyping.value = false
     let reply = ''
     switch (intent.intent) {
-      case 'book_room':
+      case 'book_room': {
         reply = `已收到预约请求。${intent.slots.time ? '时间：' + intent.slots.time : ''} 正在检索符合条件的会议室...`
         store.setActivePanel('booking')
+        // 如果有 building slot，设置 flyToTarget
+        if (intent.slots.building) {
+          const buildingId = intent.slots.building
+          store.flyToTarget = buildingId
+        }
         break
-      case 'find_free_classroom':
-        reply = `正在查找空教室... 找到 ${store.freeRooms.length} 间可用教室，已在中栏高亮显示。`
-        store.highlightRooms(store.freeRooms.map(r => r.id))
+      }
+      case 'find_free_classroom': {
+        const freeRooms = store.freeRooms
+        reply = `正在查找空教室... 找到 ${freeRooms.length} 间可用教室，已在中栏高亮显示。`
+        store.highlightRooms(freeRooms.map(r => r.id))
         store.setActivePanel('booking')
+        // 设置 flyToTarget 为第一个空教室所在的 buildingId
+        if (freeRooms.length > 0) {
+          const firstRoom = freeRooms[0]
+          const buildingId = firstRoom.floorId.split('-')[0]
+          store.flyToTarget = buildingId
+        }
         break
-      case 'repair':
+      }
+      case 'repair': {
         reply = `收到报修请求：${intent.slots.building || ''}${intent.slots.room || ''} ${intent.slots.device || '设备'}故障。已生成工单。`
         store.setActivePanel('repair')
+        // 设置 flyToTarget 为报修地点对应的 buildingId
+        if (intent.slots.building) {
+          // 尝试从 building slot 中提取 buildingId（如 "3号楼" -> "b3"）
+          const numMatch = intent.slots.building.match(/(\d+)/)
+          if (numMatch) {
+            const buildingId = 'b' + numMatch[1]
+            store.flyToTarget = buildingId
+          }
+        } else if (intent.slots.room) {
+          // 通过房间号尝试在所有房间中查找对应的 buildingId
+          const matchedRoom = store.allRooms.find(r => r.name.includes(intent.slots.room!))
+          if (matchedRoom) {
+            const buildingId = matchedRoom.floorId.split('-')[0]
+            store.flyToTarget = buildingId
+          }
+        }
         break
-      case 'admin_overview':
+      }
+      case 'admin_overview': {
         reply = '已切换至管理态势视图。全校占用率 ' + store.occupancyRate + '%，能耗与人流数据已更新。'
         store.setViewMode('admin')
         store.setActivePanel('admin')
         break
+      }
       default:
         reply = '抱歉，我没有完全理解。试试说「帮我订明天下午有投影的会议室」或「看一下全校占用情况」。'
     }
@@ -98,6 +157,15 @@ watch(() => store.messages.length, () => {
 
     <!-- 消息流 -->
     <div ref="messageContainer" class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <!-- 欢迎消息（含时间信息） -->
+      <div class="flex flex-col gap-2 animate-fade-in-up">
+        <div class="flex justify-start">
+          <div class="max-w-[92%] px-3.5 py-2.5 rounded-2xl rounded-bl-sm text-[13px] leading-relaxed" style="background: #ffffff; border: 1px solid rgba(148,163,184,0.15); color: #334155;">
+            {{ welcomeMessage }}
+          </div>
+        </div>
+      </div>
+
       <div v-for="(msg, idx) in store.messages" :key="idx" class="flex flex-col gap-2 animate-fade-in-up" :style="{ animationDelay: idx * 0.05 + 's' }">
         <div :class="['flex', msg.role === 'user' ? 'justify-end' : 'justify-start']">
           <div :class="[

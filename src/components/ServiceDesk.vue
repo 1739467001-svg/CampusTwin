@@ -19,6 +19,11 @@ function onFocusBuilding(buildingId: string) {
   }
 }
 
+function viewIn3D(floorId: string) {
+  const buildingId = floorId.split('-')[0]
+  store.setFocusBuilding(buildingId)
+}
+
 const panelTitle = computed(() => {
   if (store.viewMode === 'admin') return '管理态势中心'
   switch (store.activePanel) {
@@ -38,6 +43,11 @@ function confirmBooking(roomId: string) {
   const ok = store.bookRoom(roomId, '14:00', '16:00')
   if (ok) {
     store.addMessage('agent', `预约成功！凭证号 BK${Date.now().toString().slice(-6)}，已同步至您的日历。`)
+    const room = store.allRooms.find(r => r.id === roomId)
+    if (room) {
+      const buildingId = room.floorId.split('-')[0]
+      store.setFocusBuilding(buildingId)
+    }
   }
 }
 
@@ -46,6 +56,8 @@ function submitRepair(roomId: string, deviceType: string) {
   store.createTicket(device?.id || 'unknown', roomId, `${deviceType}故障`)
   store.addMessage('agent', `报修单已提交，工单号 TK${Date.now().toString().slice(-6)}，后勤将尽快处理。`)
 }
+
+const simulatedTimeLabel = computed(() => `${String(store.simulatedHour).padStart(2, '0')}:00`)
 </script>
 
 <template>
@@ -111,16 +123,27 @@ function submitRepair(roomId: string, deviceType: string) {
                 <span class="w-2 h-2 rounded-full" style="background: #059669;"></span>
                 <span class="text-[13px] font-medium" style="color: #1e293b;">{{ room.name }}</span>
               </div>
-              <span class="text-[10px] px-2 py-0.5 rounded-full" style="background: #f1f5f9; color: #64748b;">{{ room.type === 'meeting' ? '会议室' : room.type === 'classroom' ? '教室' : room.type === 'lab' ? '实验室' : '场馆' }}</span>
+              <button
+                @click.stop="viewIn3D(room.floorId)"
+                class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition bg-[#f8fafc] border border-[rgba(148,163,184,0.12)] text-[#64748b] hover:border-[rgba(14,58,103,0.3)] hover:text-[#0e3a67] hover:bg-[rgba(14,58,103,0.04)]"
+              >
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                在3D中查看
+              </button>
             </div>
             <div class="flex items-center gap-3 text-[11px] mb-3" style="color: #94a3b8;">
               <span>容量 {{ room.capacity }} 人</span>
               <span>{{ room.equipment.join(' · ') }}</span>
             </div>
-            <button @click="confirmBooking(room.id)" class="w-full py-2 rounded-lg text-[12px] font-medium text-white transition hover:scale-[1.01] active:scale-[0.99]"
-              style="background: linear-gradient(135deg, #2563eb, #1d4ed8); box-shadow: 0 2px 8px rgba(37,99,235,0.2);">
-              确认预约
-            </button>
+            <div class="flex items-center gap-2">
+              <button @click.stop="confirmBooking(room.id)" class="flex-1 py-2 rounded-lg text-[12px] font-medium text-white transition hover:scale-[1.01] active:scale-[0.99]"
+                style="background: linear-gradient(135deg, #2563eb, #1d4ed8); box-shadow: 0 2px 8px rgba(37,99,235,0.2);">
+                确认预约
+              </button>
+            </div>
           </div>
           <div v-if="!candidateRooms.length" class="text-center py-8 text-[13px]" style="color: #94a3b8;">暂无可用房间</div>
         </div>
@@ -129,7 +152,19 @@ function submitRepair(roomId: string, deviceType: string) {
         <div v-else-if="store.activePanel === 'repair'" class="space-y-3">
           <div class="text-[12px] font-medium mb-2" style="color: #64748b;">快速报修</div>
           <div v-for="room in store.allRooms.filter(r => r.status !== 'repair')" :key="room.id" class="p-3.5 rounded-xl" style="background: #ffffff; border: 1px solid rgba(148,163,184,0.12);">
-            <div class="text-[13px] font-medium mb-2" style="color: #1e293b;">{{ room.name }}</div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-[13px] font-medium" style="color: #1e293b;">{{ room.name }}</div>
+              <button
+                @click="viewIn3D(room.floorId)"
+                class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition bg-[#f8fafc] border border-[rgba(148,163,184,0.12)] text-[#64748b] hover:border-[rgba(14,58,103,0.3)] hover:text-[#0e3a67] hover:bg-[rgba(14,58,103,0.04)]"
+              >
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                在3D中查看
+              </button>
+            </div>
             <div class="flex flex-wrap gap-1.5">
               <button v-for="eq in room.equipment" :key="eq"
                 @click="submitRepair(room.id, eq === '投影' ? 'projector' : eq === '空调' ? 'ac' : eq === '灯光' ? 'light' : 'mic')"
@@ -177,6 +212,18 @@ function submitRepair(roomId: string, deviceType: string) {
           </svg>
           {{ store.accessibilityMode ? '新生友好模式开' : '新生友好模式' }}
         </button>
+        <!-- 模拟时间控制 -->
+        <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium" style="background: #f1f5f9; border: 1px solid rgba(148,163,184,0.12); color: #64748b;">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>模拟时间</span>
+          <span class="font-mono font-semibold" style="color: #0e3a67;">{{ simulatedTimeLabel }}</span>
+          <button
+            @click="store.tickSimulation()"
+            class="ml-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-medium transition bg-[#ffffff] border border-[rgba(148,163,184,0.12)] text-[#64748b] hover:border-[rgba(37,99,235,0.3)] hover:text-[#2563eb] hover:bg-[rgba(37,99,235,0.04)]"
+          >推进1小时</button>
+        </div>
       </div>
       <span class="text-[10px] font-serif" style="color: #cbd5e1;">诚毅勤朴 · 浙江工商大学</span>
     </div>

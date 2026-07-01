@@ -114,9 +114,28 @@ watch(() => store.focusBuildingId, (buildingId) => {
 watch(() => store.activePanel, (panel) => {
   if (!scene) return
   if (panel === 'booking' && store.highlightedRoomIds.length > 0) {
-    // 高亮空教室后，飞行到第一个
     const firstId = store.highlightedRoomIds[0]
     scene.focusRoom(firstId)
+  }
+})
+
+// flyToTarget — Agent 发出飞行指令后，3D 场景飞行到目标建筑
+watch(() => store.flyToTarget, (target) => {
+  if (!scene || !target) return
+  scene.flyTo(target, () => {
+    store.flyToTarget = null
+  })
+})
+
+// 模拟时间变化后，同步热力图（如果在开启状态）
+watch(() => store.simulatedHour, () => {
+  // 时间变化后房间状态已由 store 的 tickSimulation 更新
+  // 如果热力图开着，需要刷新
+  if (store.heatmapMode !== 'off' && scene) {
+    // 触发热力图重新计算
+    const mode = store.heatmapMode
+    store.heatmapMode = 'off'
+    setTimeout(() => { store.heatmapMode = mode }, 50)
   }
 })
 
