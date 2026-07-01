@@ -5,7 +5,7 @@ import AdminDashboard from './AdminDashboard.vue'
 
 const store = useCampusStore()
 
-function onFocusBuilding(buildingId: string) {
+function onFocusBuilding(buildingId: string | null) {
   if (buildingId) {
     store.setFocusBuilding(buildingId)
     const building = store.buildings.find(b => b.id === buildingId)

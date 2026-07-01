@@ -401,11 +401,17 @@ export const useCampusStore = defineStore('campus', () => {
     heatmapMode.value = mode
   }
 
+  let focusTimer: ReturnType<typeof setTimeout> | null = null
+
   function setFocusBuilding(buildingId: string | null) {
+    if (focusTimer) {
+      clearTimeout(focusTimer)
+      focusTimer = null
+    }
     focusBuildingId.value = buildingId
     // 3 秒后自动取消聚焦
     if (buildingId) {
-      setTimeout(() => {
+      focusTimer = setTimeout(() => {
         if (focusBuildingId.value === buildingId) {
           focusBuildingId.value = null
         }

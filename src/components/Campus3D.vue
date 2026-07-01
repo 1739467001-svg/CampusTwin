@@ -192,7 +192,7 @@ function flyToBuilding(buildingId: string) {
 </script>
 
 <template>
-  <div ref="canvasContainer" class="absolute inset-0">
+  <div ref="canvasContainer" class="absolute inset-0" style="min-width: 200px; min-height: 200px;">
     <!-- Three.js Canvas 由 scene.init() 自动插入 -->
   </div>
 
@@ -271,13 +271,13 @@ function flyToBuilding(buildingId: string) {
 
         <!-- 展开楼层 -->
         <button
-          @click="toggleExpand(clickInfo.roomId.split('-')[0])"
+          @click="toggleExpand(clickInfo.buildingId)"
           class="w-full py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-slate-600 transition flex items-center justify-center gap-1"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
           </svg>
-          {{ expandedBuildings.has(clickInfo.roomId.split('-')[0]) ? '收起楼层' : '展开楼层' }}
+          {{ expandedBuildings.has(clickInfo.buildingId) ? '收起楼层' : '展开楼层' }}
         </button>
       </div>
     </div>

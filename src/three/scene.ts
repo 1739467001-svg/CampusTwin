@@ -38,6 +38,7 @@ const ACCENT_COLORS = [0x0e3a67, 0x2563eb, 0xb8860b, 0x059669]
 export type RoomInfoCard = {
   roomId: string
   roomName: string
+  buildingId: string
   buildingName: string
   floor: number
   type: string
@@ -86,6 +87,15 @@ export class CampusScene {
   private highlightedIds = new Set<string>()
   private expandedBuildings = new Set<string>()
 
+  // 事件处理器引用（用于 dispose 清理）
+  private onResizeHandler = () => { /* placeholder */ }
+  private onMouseMoveHandler = this.onMouseMove.bind(this)
+  private onMouseClickHandler = this.onMouseClick.bind(this)
+  private onContextLostHandler = (e: Event) => {
+    e.preventDefault()
+    console.warn('WebGL context lost —  campus scene paused')
+  }
+
   // 展开动画
   private expandAnimations = new Map<string, { progress: number; target: number }>()
 
@@ -108,17 +118,29 @@ export class CampusScene {
   onBuildingClick: ((info: BuildingInfo | null) => void) | null = null
 
   init(container: HTMLDivElement, buildings: Building[]) {
-    const w = container.clientWidth
-    const h = container.clientHeight
+    // 容器尺寸容错：如果为 0，使用父元素尺寸或默认值
+    let w = container.clientWidth
+    let h = container.clientHeight
+    if (w === 0 || h === 0) {
+      const parent = container.parentElement
+      w = parent ? parent.clientWidth : 800
+      h = parent ? parent.clientHeight : 600
+      // 强制容器有尺寸
+      container.style.width = w + 'px'
+      container.style.height = h + 'px'
+    }
 
     // === Renderer ===
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
     this.renderer.setSize(w, h)
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
+    this.renderer.domElement.style.width = '100%'
+    this.renderer.domElement.style.height = '100%'
+    this.renderer.domElement.style.display = 'block'
     container.appendChild(this.renderer.domElement)
 
     // === Scene ===
@@ -127,7 +149,8 @@ export class CampusScene {
     this.scene.fog = new THREE.Fog(COLORS.fog, 80, 250)
 
     // === Camera ===
-    this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 500)
+    const aspect = w > 0 && h > 0 ? w / h : 1
+    this.camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 500)
     this.camera.position.set(70, 50, 70)
 
     // === Controls ===
@@ -151,19 +174,21 @@ export class CampusScene {
     this.buildCampus(buildings)
 
     // === Resize ===
-    const onResize = () => {
+    this.onResizeHandler = () => {
       const nw = container.clientWidth
       const nh = container.clientHeight
+      if (nw === 0 || nh === 0) return
       this.camera.aspect = nw / nh
       this.camera.updateProjectionMatrix()
       this.renderer.setSize(nw, nh)
     }
-    window.addEventListener('resize', onResize)
+    window.addEventListener('resize', this.onResizeHandler)
 
     // === 鼠标事件 ===
     const canvas = this.renderer.domElement
-    canvas.addEventListener('mousemove', this.onMouseMove.bind(this))
-    canvas.addEventListener('click', this.onMouseClick.bind(this))
+    canvas.addEventListener('mousemove', this.onMouseMoveHandler)
+    canvas.addEventListener('click', this.onMouseClickHandler)
+    canvas.addEventListener('webglcontextlost', this.onContextLostHandler)
 
     // === 动画循环 ===
     const animate = () => {
@@ -645,6 +670,7 @@ export class CampusScene {
     return {
       roomId: room.id,
       roomName: room.name,
+      buildingId: mapping.buildingId,
       buildingName: mapping.buildingName,
       floor: mapping.floor,
       type: typeLabels[room.type] || room.type,
@@ -1006,16 +1032,19 @@ export class CampusScene {
     cancelAnimationFrame(this.animationId)
     this.clearHeatMap()
     this.clearPathLine()
+    window.removeEventListener('resize', this.onResizeHandler)
+    const canvas = this.renderer.domElement
+    canvas.removeEventListener('mousemove', this.onMouseMoveHandler)
+    canvas.removeEventListener('click', this.onMouseClickHandler)
+    canvas.removeEventListener('webglcontextlost', this.onContextLostHandler)
     this.renderer.dispose()
     this.scene.traverse((obj) => {
-      if ((obj as THREE.Mesh).geometry) {
-        ;(obj as THREE.Mesh).geometry.dispose()
-      }
-      if ((obj as THREE.Mesh).material) {
-        const mat = (obj as THREE.Mesh).material as THREE.Material
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line || obj instanceof THREE.Sprite) {
+        obj.geometry?.dispose()
+        const mat = obj.material
         if (Array.isArray(mat)) {
           mat.forEach((m) => m.dispose())
-        } else {
+        } else if (mat) {
           mat.dispose()
         }
       }
