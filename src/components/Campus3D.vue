@@ -8,13 +8,23 @@ const canvasContainer = ref<HTMLDivElement | null>(null)
 
 let scene: CampusScene | null = null
 
-// 信息卡
 const hoverInfo = ref<RoomInfoCard | null>(null)
 const clickInfo = ref<RoomInfoCard | null>(null)
+const expandedBuildings = ref<Set<string>>(new Set())
+
+// 窗口尺寸（模板中使用）
+const winWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1200)
+const winHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 800)
+if (typeof window !== 'undefined') {
+  window.addEventListener('resize', () => {
+    winWidth.value = window.innerWidth
+    winHeight.value = window.innerHeight
+  })
+}
 
 const statusLegend = [
   { label: '空闲', color: '#10b981' },
-  { label: '占用', color: '#6b7280' },
+  { label: '占用', color: '#94a3b8' },
   { label: '报修', color: '#ef4444' },
   { label: '命中', color: '#3b82f6' },
 ]
@@ -40,6 +50,12 @@ onMounted(() => {
     clickInfo.value = info
     if (info) {
       store.selectedBuildingId = info.roomId
+      // 自动联动右侧面板
+      if (info.canBook) {
+        store.setActivePanel('booking')
+      } else if (info.status === 'repair') {
+        store.setActivePanel('repair')
+      }
     } else {
       store.selectedBuildingId = null
     }
@@ -48,12 +64,12 @@ onMounted(() => {
   scene.init(canvasContainer.value, store.buildings)
 })
 
-// 监听高亮变化 → 联动 3D
+// 高亮房间
 watch(() => store.highlightedRoomIds, (ids) => {
   if (scene) scene.highlightRooms(ids)
 }, { deep: true })
 
-// 监听预约/报修导致的房间状态变化 → 同步 3D 颜色
+// 房间状态变化同步到 3D
 watch(() => store.allRooms.map(r => ({ id: r.id, status: r.status })), (changes) => {
   if (!scene) return
   changes.forEach(({ id, status }) => {
@@ -61,7 +77,7 @@ watch(() => store.allRooms.map(r => ({ id: r.id, status: r.status })), (changes)
   })
 }, { deep: true })
 
-// 监听热力模式变化 → 更新 3D 热力层
+// 热力图
 watch(() => store.heatmapMode, (mode) => {
   if (!scene) return
   if (mode === 'off') {
@@ -71,7 +87,6 @@ watch(() => store.heatmapMode, (mode) => {
   const heatData = new Map<string, number>()
   store.allRooms.forEach(room => {
     if (mode === 'energy') {
-      // 按楼栋能耗分配到各房间
       const buildingEnergy = store.energies.find(e => e.buildingId === room.floorId.split('-')[0])?.kwh || 500
       const floorsInBuilding = store.buildings.find(b => b.id === room.floorId.split('-')[0])?.floors.length || 1
       const roomsInFloor = store.buildings
@@ -81,7 +96,6 @@ watch(() => store.heatmapMode, (mode) => {
       const busy = room.status === 'busy' ? 1.5 : room.status === 'repair' ? 0.8 : 0.3
       heatData.set(room.id, Math.min(1, (perRoom / 200) * busy))
     } else if (mode === 'traffic') {
-      // 按楼栋人流分配到各房间
       const traffic = store.traffics.find(t => t.zoneId === room.floorId.split('-')[0])?.count || 100
       const busy = room.status === 'busy' ? 1.2 : 0.3
       heatData.set(room.id, Math.min(1, (traffic / 500) * busy))
@@ -90,10 +104,20 @@ watch(() => store.heatmapMode, (mode) => {
   scene.updateHeatMap(heatData)
 })
 
-// 监听聚焦楼宇 → 相机飞过去
+// 聚焦建筑
 watch(() => store.focusBuildingId, (buildingId) => {
   if (!scene || !buildingId) return
   scene.focusBuilding(buildingId)
+})
+
+// Agent 指令触发 3D 联动
+watch(() => store.activePanel, (panel) => {
+  if (!scene) return
+  if (panel === 'booking' && store.highlightedRoomIds.length > 0) {
+    // 高亮空教室后，飞行到第一个
+    const firstId = store.highlightedRoomIds[0]
+    scene.focusRoom(firstId)
+  }
 })
 
 onUnmounted(() => {
@@ -107,6 +131,45 @@ function closeInfoCard() {
   clickInfo.value = null
   store.selectedBuildingId = null
 }
+
+function bookFrom3D(roomId: string) {
+  const ok = store.bookRoom(roomId, '14:00', '16:00')
+  if (ok) {
+    store.addMessage('agent', `已从 3D 场景完成预约！凭证号 BK${Date.now().toString().slice(-6)}`)
+    // 3D 中房间颜色会自动通过 watch 同步
+    closeInfoCard()
+  }
+}
+
+function repairFrom3D(roomId: string) {
+  const room = store.allRooms.find(r => r.id === roomId)
+  if (!room) return
+  const deviceType = room.equipment[0] || 'projector'
+  const device = store.devices.find(d => d.roomId === roomId && d.type === deviceType)
+  store.createTicket(device?.id || 'unknown', roomId, `${deviceType}故障`)
+  store.addMessage('agent', `已从 3D 场景提交报修，工单号 TK${Date.now().toString().slice(-6)}`)
+  closeInfoCard()
+}
+
+function toggleExpand(buildingId: string) {
+  if (!scene) return
+  scene.toggleBuildingExpand(buildingId)
+  if (expandedBuildings.value.has(buildingId)) {
+    expandedBuildings.value.delete(buildingId)
+  } else {
+    expandedBuildings.value.add(buildingId)
+  }
+}
+
+function flyToBuilding(buildingId: string) {
+  if (!scene) return
+  scene.flyTo(buildingId, () => {
+    // 飞行完成后自动展开
+    if (!expandedBuildings.value.has(buildingId)) {
+      toggleExpand(buildingId)
+    }
+  })
+}
 </script>
 
 <template>
@@ -118,77 +181,129 @@ function closeInfoCard() {
   <Teleport to="body">
     <div
       v-if="hoverInfo && !clickInfo"
-      class="fixed z-[9999] pointer-events-none px-2.5 py-1.5 rounded-lg bg-black/70 backdrop-blur-sm border border-white/15 text-white text-xs space-y-0.5 transition-opacity duration-100"
+      class="fixed z-[9999] pointer-events-none px-3 py-2 rounded-xl text-white text-[11px] space-y-0.5 transition-opacity duration-100"
+      style="background: rgba(14,58,103,0.9); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 8px 32px rgba(0,0,0,0.2);"
       :style="{ left: hoverInfo.screenX + 12 + 'px', top: hoverInfo.screenY - 10 + 'px' }"
     >
-      <div class="font-medium">{{ hoverInfo.buildingName }} · {{ hoverInfo.roomName }}</div>
-      <div class="text-white/60">{{ typeLabel(hoverInfo.type) }} · {{ hoverInfo.floor }}F · {{ hoverInfo.capacity }}人</div>
+      <div class="font-medium text-[12px]">{{ hoverInfo.buildingName }} · {{ hoverInfo.roomName }}</div>
+      <div style="color: rgba(255,255,255,0.55);">{{ typeLabel(hoverInfo.type) }} · {{ hoverInfo.floor }}F · {{ hoverInfo.capacity }}人</div>
+      <div class="flex items-center gap-1.5 mt-1">
+        <span class="w-1.5 h-1.5 rounded-full"
+          :style="{ background: hoverInfo.status === 'free' ? '#10b981' : hoverInfo.status === 'busy' ? '#94a3b8' : '#ef4444' }"></span>
+        <span class="text-[10px]">{{ statusLabel(hoverInfo.status) }}</span>
+        <span v-if="hoverInfo.canBook" class="text-[10px] px-1.5 py-0.5 rounded-full ml-1" style="background: rgba(37,99,235,0.3); color: #93bbfd;">可预约</span>
+      </div>
     </div>
   </Teleport>
 
-  <!-- 点击信息卡 -->
+  <!-- 点击信息卡 —— 含 3D 操作按钮 -->
   <Teleport to="body">
     <div
       v-if="clickInfo"
-      class="fixed z-[9999] w-56 rounded-xl bg-[#111827]/95 backdrop-blur-md border border-white/10 shadow-2xl overflow-hidden"
-      :style="{ left: clickInfo.screenX + 16 + 'px', top: clickInfo.screenY - 20 + 'px' }"
+      class="fixed z-[9999] w-64 rounded-2xl overflow-hidden"
+      style="background: rgba(255,255,255,0.97); backdrop-filter: blur(16px); border: 1px solid rgba(148,163,184,0.15); box-shadow: 0 16px 48px rgba(0,0,0,0.12);"
+      :style="{ left: Math.min(clickInfo.screenX + 16, winWidth - 280) + 'px', top: Math.min(clickInfo.screenY - 20, winHeight - 320) + 'px' }"
     >
       <!-- 头部 -->
-      <div class="px-3 py-2.5 bg-white/5 border-b border-white/5 flex items-center justify-between">
+      <div class="px-4 py-3 flex items-center justify-between" style="border-bottom: 1px solid rgba(148,163,184,0.1);">
         <div>
-          <div class="text-white text-sm font-medium">{{ clickInfo.roomName }}</div>
-          <div class="text-white/50 text-[11px]">{{ clickInfo.buildingName }} · {{ clickInfo.floor }}F</div>
+          <div class="text-[13px] font-semibold" style="color: #1e293b;">{{ clickInfo.roomName }}</div>
+          <div style="color: #94a3b8;" class="text-[11px]">{{ clickInfo.buildingName }} · {{ clickInfo.floor }}F</div>
         </div>
-        <button @click="closeInfoCard" class="w-5 h-5 rounded flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition">
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <button @click="closeInfoCard" class="w-6 h-6 rounded-lg flex items-center justify-center transition text-[#cbd5e1] hover:text-[#64748b] hover:bg-[#f1f5f9]">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
-      <!-- 详情 -->
-      <div class="px-3 py-2.5 space-y-2">
-        <div class="flex items-center gap-2">
-          <span class="text-[10px] px-1.5 py-0.5 rounded border"
-            :class="{
-              'border-[#10b981]/50 bg-[#10b981]/10 text-[#10b981]': clickInfo.status === 'free',
-              'border-gray-500/50 bg-gray-500/10 text-gray-400': clickInfo.status === 'busy',
-              'border-[#ef4444]/50 bg-[#ef4444]/10 text-[#ef4444]': clickInfo.status === 'repair',
-            }"
+
+      <!-- 信息区 -->
+      <div class="px-4 py-3 space-y-2.5">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[10px] px-2 py-0.5 rounded-full font-medium"
+            :class="clickInfo.status === 'free' ? 'bg-emerald-50 text-emerald-600' : clickInfo.status === 'busy' ? 'bg-slate-100 text-slate-500' : 'bg-red-50 text-red-500'"
           >{{ statusLabel(clickInfo.status) }}</span>
-          <span class="text-white/40 text-[11px]">{{ typeLabel(clickInfo.type) }}</span>
-          <span class="text-white/40 text-[11px]">{{ clickInfo.capacity }}人</span>
+          <span class="text-[11px] text-slate-400">{{ typeLabel(clickInfo.type) }}</span>
+          <span class="text-[11px] text-slate-400">{{ clickInfo.capacity }}人</span>
         </div>
+
         <div class="flex flex-wrap gap-1">
-          <span v-for="eq in clickInfo.equipment" :key="eq" class="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-white/50 border border-white/10">{{ eq }}</span>
+          <span v-for="eq in clickInfo.equipment" :key="eq" class="text-[10px] px-2 py-0.5 rounded-md bg-slate-50 text-slate-400 border border-slate-100">{{ eq }}</span>
         </div>
+
+        <!-- 3D 直接操作按钮 -->
+        <div class="flex gap-2 pt-1">
+          <button
+            v-if="clickInfo.canBook"
+            @click="bookFrom3D(clickInfo.roomId)"
+            class="flex-1 py-2 rounded-lg text-[12px] font-medium text-white transition hover:scale-[1.02] active:scale-[0.98]"
+            style="background: linear-gradient(135deg, #2563eb, #1d4ed8);"
+          >
+            预约此教室
+          </button>
+          <button
+            v-if="clickInfo.canRepair"
+            @click="repairFrom3D(clickInfo.roomId)"
+            class="flex-1 py-2 rounded-lg text-[12px] font-medium transition hover:scale-[1.02] active:scale-[0.98] bg-red-50 text-red-500 border border-red-100 hover:bg-red-100"
+          >
+            报修
+          </button>
+        </div>
+
+        <!-- 展开楼层 -->
+        <button
+          @click="toggleExpand(clickInfo.roomId.split('-')[0])"
+          class="w-full py-1.5 rounded-lg text-[11px] text-slate-400 hover:text-slate-600 transition flex items-center justify-center gap-1"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+          </svg>
+          {{ expandedBuildings.has(clickInfo.roomId.split('-')[0]) ? '收起楼层' : '展开楼层' }}
+        </button>
       </div>
     </div>
   </Teleport>
 
   <!-- 状态图例 -->
-  <div class="absolute bottom-4 left-4 flex items-center gap-3 px-3 py-2 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10 z-10">
+  <div class="absolute bottom-5 left-5 flex items-center gap-3 px-3.5 py-2 rounded-xl z-10"
+    style="background: rgba(255,255,255,0.85); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,0.12); box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
     <div v-for="s in statusLegend" :key="s.label" class="flex items-center gap-1.5">
-      <span class="w-2.5 h-2.5 rounded-full" :style="{ background: s.color }"></span>
-      <span class="text-white/60 text-[11px]">{{ s.label }}</span>
+      <span class="w-2 h-2 rounded-full" :style="{ background: s.color }"></span>
+      <span class="text-[11px] text-slate-500">{{ s.label }}</span>
     </div>
   </div>
 
   <!-- 右上角 KPI -->
-  <div class="absolute top-4 right-4 flex flex-col gap-2 z-10">
-    <div class="px-3 py-2 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10 text-right">
-      <div class="text-white/40 text-[10px]">全校占用率</div>
-      <div class="text-white/80 text-lg font-semibold">{{ store.occupancyRate }}%</div>
+  <div class="absolute top-5 right-5 flex flex-col gap-2 z-10">
+    <div class="px-4 py-2.5 rounded-xl text-right"
+      style="background: rgba(255,255,255,0.85); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,0.12); box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+      <div class="text-[10px] text-slate-400">全校占用率</div>
+      <div class="text-xl font-semibold font-mono text-slate-700">{{ store.occupancyRate }}%</div>
     </div>
-    <div class="px-3 py-2 rounded-lg bg-black/40 backdrop-blur-sm border border-white/10 text-right">
-      <div class="text-white/40 text-[10px]">可用房间</div>
-      <div class="text-lg font-semibold" style="color: #10b981">{{ store.freeRooms.length }}</div>
+    <div class="px-4 py-2.5 rounded-xl text-right"
+      style="background: rgba(255,255,255,0.85); backdrop-filter: blur(12px); border: 1px solid rgba(148,163,184,0.12); box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+      <div class="text-[10px] text-slate-400">可用房间</div>
+      <div class="text-xl font-semibold font-mono text-emerald-500">{{ store.freeRooms.length }}</div>
     </div>
   </div>
 
-  <!-- 楼名标签（3D 对应的 HTML 标注） -->
-  <div class="absolute top-4 left-4 flex flex-col gap-1 z-10">
-    <div v-for="b in store.buildings" :key="b.id" class="px-2.5 py-1 rounded-md bg-black/30 backdrop-blur-sm border border-white/10">
-      <div class="text-white/60 text-[11px] font-medium">{{ b.name }}</div>
+  <!-- 建筑快捷导航 -->
+  <div class="absolute top-5 left-5 flex flex-col gap-1.5 z-10">
+    <div v-for="b in store.buildings" :key="b.id"
+      class="px-3 py-2 rounded-xl cursor-pointer transition hover:scale-[1.02]"
+      style="background: rgba(255,255,255,0.85); backdrop-filter: blur(8px); border: 1px solid rgba(148,163,184,0.12); box-shadow: 0 2px 8px rgba(0,0,0,0.04);"
+      @click="flyToBuilding(b.id)"
+    >
+      <div class="text-[11px] font-medium text-slate-600">{{ b.name }}</div>
+      <div class="text-[10px] text-slate-400">{{ b.floors.length }}层 · {{ b.floors.reduce((s, f) => s + f.rooms.length, 0) }}间</div>
+    </div>
+  </div>
+
+  <!-- 3D 操作提示 -->
+  <div class="absolute bottom-5 right-5 z-10">
+    <div class="px-3 py-2 rounded-xl text-[10px] text-slate-400"
+      style="background: rgba(255,255,255,0.7); backdrop-filter: blur(8px); border: 1px solid rgba(148,163,184,0.1);">
+      点击房间查看详情 · 拖拽旋转 · 滚轮缩放
     </div>
   </div>
 </template>

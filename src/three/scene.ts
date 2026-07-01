@@ -2,16 +2,38 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Building, Room, RoomStatus } from '../stores/campus'
 
-// 状态 → 颜色映射
-const STATUS_COLORS: Record<RoomStatus, number> = {
-  free: 0x10b981,   // 绿
-  busy: 0x6b7280,   // 灰
-  repair: 0xef4444,  // 红
+// === 颜色配置（浅色学术风）===
+const COLORS = {
+  bg: 0xeef2f7,           // 背景 — 浅灰蓝
+  fog: 0xeef2f7,          // 雾
+  ground: 0xdce3ec,       // 地面
+  groundLight: 0xe4ebf3,  // 校园区地面
+  road: 0xc8d4e0,         // 道路
+  roadLine: 0xffffff,     // 道路标线
+  buildingBase: 0xf0f2f5, // 建筑主体
+  buildingEdge: 0xd0d8e0, // 建筑边缘/分层线
+  window: 0xa8c4e0,       // 窗户玻璃色
+  windowLit: 0xffe8a0,    // 亮灯窗户
+  roof: 0xe8ecf0,         // 屋顶
+  treeLeaf: 0x5a9e6e,     // 树叶
+  treeTrunk: 0x8b7355,    // 树干
+  labelBg: 0x0e3a67,      // 标签背景
+  labelText: 0xffffff,    // 标签文字
+  highlight: 0x3b82f6,    // 高亮/命中色
+  status: {
+    free: 0x10b981,
+    busy: 0x94a3b8,
+    repair: 0xef4444,
+  } as Record<RoomStatus, number>,
+  heat: {
+    low: 0x3b82f6,
+    mid: 0xf59e0b,
+    high: 0xef4444,
+  },
 }
-const HIT_COLOR = 0x3b82f6 // 蓝 — Agent 命中
 
-// 楼宇暖色系
-const BUILDING_WARM_COLORS = [0xd4a853, 0xc4956a, 0xb8a07e, 0xcdb891]
+// 品牌色点缀
+const ACCENT_COLORS = [0x0e3a67, 0x2563eb, 0xb8860b, 0x059669]
 
 export type RoomInfoCard = {
   roomId: string
@@ -22,6 +44,17 @@ export type RoomInfoCard = {
   capacity: number
   equipment: string[]
   status: RoomStatus
+  screenX: number
+  screenY: number
+  canBook: boolean
+  canRepair: boolean
+}
+
+export type BuildingInfo = {
+  buildingId: string
+  buildingName: string
+  floorCount: number
+  roomCount: number
   screenX: number
   screenY: number
 }
@@ -36,30 +69,43 @@ export class CampusScene {
   private animationId = 0
 
   // 数据 → 3D 映射
-  private buildingMeshes: Map<string, THREE.Group> = new Map()
-  private roomMeshMap: Map<string, THREE.Mesh> = new Map()
-  private roomBuildingMap: Map<string, { buildingId: string; buildingName: string; floor: number }> = new Map()
-  private roomDataMap: Map<string, Room> = new Map()
+  private buildingRootMap = new Map<string, THREE.Group>()
+  private floorGroupMap = new Map<string, THREE.Group>()
+  private roomMeshMap = new Map<string, THREE.Mesh>()
+  private roomBuildingMap = new Map<string, { buildingId: string; buildingName: string; floor: number }>()
+  private roomDataMap = new Map<string, Room>()
+  private buildingLabelMap = new Map<string, THREE.Sprite>()
+  private heatLabelMap = new Map<string, THREE.Sprite>()
+  private pathLine: THREE.Line | null = null
+  private pathCurve: THREE.CatmullRomCurve3 | null = null
+  private pathProgress = 0
 
   // 交互状态
   private hoveredMesh: THREE.Mesh | null = null
   private selectedRoomId: string | null = null
-  private highlightedIds: Set<string> = new Set()
+  private highlightedIds = new Set<string>()
+  private expandedBuildings = new Set<string>()
 
-  // 热力层
-  private heatMapData: Map<string, number> = new Map()
-  private heatOverlayMeshes: Map<string, THREE.Mesh> = new Map()
+  // 展开动画
+  private expandAnimations = new Map<string, { progress: number; target: number }>()
 
   // 聚焦动画
-  private focusTarget: THREE.Vector3 | null = null
-  private focusCameraPos: THREE.Vector3 | null = null
-  private focusProgress = 0
-  private focusStartCamPos = new THREE.Vector3()
-  private focusStartTarget = new THREE.Vector3()
+  private focusState: {
+    progress: number
+    startCam: THREE.Vector3
+    startTarget: THREE.Vector3
+    endCam: THREE.Vector3
+    endTarget: THREE.Vector3
+    onComplete?: () => void
+  } | null = null
+
+  // 热力层
+  private heatOverlayMeshes = new Map<string, THREE.Mesh>()
 
   // 回调
   onRoomHover: ((info: RoomInfoCard | null) => void) | null = null
   onRoomClick: ((info: RoomInfoCard | null) => void) | null = null
+  onBuildingClick: ((info: BuildingInfo | null) => void) | null = null
 
   init(container: HTMLDivElement, buildings: Building[]) {
     const w = container.clientWidth
@@ -70,33 +116,33 @@ export class CampusScene {
     this.renderer.setSize(w, h)
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFShadowMap
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.2
+    this.renderer.toneMappingExposure = 1.0
     container.appendChild(this.renderer.domElement)
 
     // === Scene ===
     this.scene = new THREE.Scene()
-    this.scene.background = new THREE.Color(0x0a1628)
-    this.scene.fog = new THREE.FogExp2(0x0a1628, 0.008)
+    this.scene.background = new THREE.Color(COLORS.bg)
+    this.scene.fog = new THREE.Fog(COLORS.fog, 80, 250)
 
     // === Camera ===
-    this.camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 500)
-    this.camera.position.set(80, 60, 80)
+    this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 500)
+    this.camera.position.set(70, 50, 70)
 
     // === Controls ===
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
     this.controls.enableDamping = true
-    this.controls.dampingFactor = 0.08
-    this.controls.maxPolarAngle = Math.PI / 2.2
-    this.controls.minDistance = 20
+    this.controls.dampingFactor = 0.05
+    this.controls.maxPolarAngle = Math.PI / 2.1
+    this.controls.minDistance = 15
     this.controls.maxDistance = 200
-    this.controls.target.set(10, 0, 10)
+    this.controls.target.set(10, 5, 10)
 
-    // === 灯光 ===
+    // === 灯光（明亮日光）===
     this.setupLights()
 
-    // === 地面 + 环境 ===
+    // === 地面 ===
     this.createGround()
     this.createRoads()
     this.createGreenery()
@@ -122,7 +168,7 @@ export class CampusScene {
     // === 动画循环 ===
     const animate = () => {
       this.animationId = requestAnimationFrame(animate)
-      this.updateFocusAnimation()
+      this.updateAnimations()
       this.controls.update()
       this.renderer.render(this.scene, this.camera)
     }
@@ -130,154 +176,288 @@ export class CampusScene {
   }
 
   private setupLights() {
-    // 环境光 — 深蓝基调
-    const ambient = new THREE.AmbientLight(0x1a2a4a, 0.6)
+    // 环境光 — 明亮
+    const ambient = new THREE.AmbientLight(0xffffff, 0.65)
     this.scene.add(ambient)
 
-    // 主方向光 — 暖白色
-    const sun = new THREE.DirectionalLight(0xffeedd, 1.2)
-    sun.position.set(40, 60, 30)
+    // 主方向光 — 柔和日光
+    const sun = new THREE.DirectionalLight(0xfff5e6, 1.0)
+    sun.position.set(50, 80, 40)
     sun.castShadow = true
-    sun.shadow.mapSize.set(1024, 1024)
-    sun.shadow.camera.left = -80
-    sun.shadow.camera.right = 80
-    sun.shadow.camera.top = 80
-    sun.shadow.camera.bottom = -80
+    sun.shadow.mapSize.set(2048, 2048)
+    sun.shadow.camera.left = -100
+    sun.shadow.camera.right = 100
+    sun.shadow.camera.top = 100
+    sun.shadow.camera.bottom = -100
+    sun.shadow.camera.near = 0.5
+    sun.shadow.camera.far = 300
+    sun.shadow.bias = -0.0005
     this.scene.add(sun)
 
-    // 补光 — 蓝色
-    const fill = new THREE.DirectionalLight(0x4488cc, 0.3)
-    fill.position.set(-30, 20, -20)
+    // 补光 — 淡蓝
+    const fill = new THREE.DirectionalLight(0xc8ddf0, 0.35)
+    fill.position.set(-40, 30, -30)
     this.scene.add(fill)
 
     // 半球光
-    const hemi = new THREE.HemisphereLight(0x2244aa, 0x332211, 0.4)
+    const hemi = new THREE.HemisphereLight(0xeef5ff, 0xd4c8b8, 0.4)
     this.scene.add(hemi)
   }
 
   private createGround() {
     // 大地面
-    const groundGeo = new THREE.PlaneGeometry(300, 300)
+    const groundGeo = new THREE.PlaneGeometry(400, 400)
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x0d1f35,
-      roughness: 0.9,
-      metalness: 0.1,
+      color: COLORS.ground,
+      roughness: 0.95,
+      metalness: 0.0,
     })
     const ground = new THREE.Mesh(groundGeo, groundMat)
     ground.rotation.x = -Math.PI / 2
-    ground.position.y = -0.05
+    ground.position.y = -0.1
     ground.receiveShadow = true
     this.scene.add(ground)
 
-    // 教学区亮色地面
-    const campusGeo = new THREE.PlaneGeometry(140, 100)
+    // 校园区亮色地面
+    const campusGeo = new THREE.PlaneGeometry(160, 120)
     const campusMat = new THREE.MeshStandardMaterial({
-      color: 0x142840,
-      roughness: 0.85,
-      metalness: 0.05,
+      color: COLORS.groundLight,
+      roughness: 0.9,
+      metalness: 0.0,
     })
     const campus = new THREE.Mesh(campusGeo, campusMat)
     campus.rotation.x = -Math.PI / 2
-    campus.position.set(10, -0.03, 15)
+    campus.position.set(10, -0.05, 15)
     campus.receiveShadow = true
     this.scene.add(campus)
   }
 
   private createRoads() {
     const roadMat = new THREE.MeshStandardMaterial({
-      color: 0x1a3050,
-      roughness: 0.7,
+      color: COLORS.road,
+      roughness: 0.8,
+      metalness: 0.05,
     })
+
     // 主干道（横向）
-    const road1 = new THREE.Mesh(new THREE.PlaneGeometry(160, 3), roadMat)
+    const road1 = new THREE.Mesh(new THREE.PlaneGeometry(200, 5), roadMat)
     road1.rotation.x = -Math.PI / 2
-    road1.position.set(10, 0, 15)
+    road1.position.set(10, 0.01, 15)
+    road1.receiveShadow = true
     this.scene.add(road1)
+
     // 纵向
-    const road2 = new THREE.Mesh(new THREE.PlaneGeometry(3, 100), roadMat)
+    const road2 = new THREE.Mesh(new THREE.PlaneGeometry(5, 140), roadMat)
     road2.rotation.x = -Math.PI / 2
-    road2.position.set(10, 0, 15)
+    road2.position.set(10, 0.01, 15)
+    road2.receiveShadow = true
     this.scene.add(road2)
+
+    // 道路标线（虚线）
+    const lineMat = new THREE.MeshBasicMaterial({ color: COLORS.roadLine, transparent: true, opacity: 0.6 })
+    for (let i = -80; i <= 80; i += 8) {
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(3, 0.3), lineMat)
+      dash.rotation.x = -Math.PI / 2
+      dash.position.set(i, 0.02, 15)
+      this.scene.add(dash)
+    }
   }
 
   private createGreenery() {
-    const treeMat = new THREE.MeshStandardMaterial({ color: 0x1a5c3a, roughness: 0.9 })
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.9 })
     const treePositions = [
-      [-20, -10], [-15, 50], [30, 55], [55, -5], [70, 50],
-      [-30, 25], [45, 20], [-10, -20], [25, -15], [60, 25],
-      [-25, 45], [40, 45], [75, 15], [-35, 5], [15, 60],
+      [-35, -15], [-25, 55], [35, 65], [65, -10], [80, 55],
+      [-45, 30], [50, 25], [-15, -30], [30, -20], [70, 30],
+      [-35, 50], [45, 50], [85, 20], [-50, 10], [20, 70],
+      [-60, 40], [55, -5], [0, -40], [40, 40], [75, 40],
     ]
+
     treePositions.forEach(([x, z]) => {
+      const group = new THREE.Group()
+      group.position.set(x, 0, z)
+
       // 树干
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.3, 0.4, 2, 6),
-        trunkMat
-      )
-      trunk.position.set(x, 1, z)
+      const trunkGeo = new THREE.CylinderGeometry(0.2, 0.35, 2.5, 6)
+      const trunkMat = new THREE.MeshStandardMaterial({ color: COLORS.treeTrunk, roughness: 0.9 })
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat)
+      trunk.position.y = 1.25
       trunk.castShadow = true
-      this.scene.add(trunk)
-      // 树冠
-      const crown = new THREE.Mesh(
-        new THREE.SphereGeometry(Math.max(0.1, 1.5 + Math.random()), 6, 5),
-        treeMat
-      )
-      crown.position.set(x, 3 + Math.random() * 0.5, z)
-      crown.castShadow = true
-      this.scene.add(crown)
+      group.add(trunk)
+
+      // 树冠（多层球体）
+      const leafMat = new THREE.MeshStandardMaterial({ color: COLORS.treeLeaf, roughness: 0.85 })
+      const crown1 = new THREE.Mesh(new THREE.SphereGeometry(2.0 + Math.random() * 0.5, 8, 6), leafMat)
+      crown1.position.y = 3.5
+      crown1.castShadow = true
+      group.add(crown1)
+
+      const crown2 = new THREE.Mesh(new THREE.SphereGeometry(1.5 + Math.random() * 0.3, 8, 6), leafMat)
+      crown2.position.set((Math.random() - 0.5) * 0.8, 4.5, (Math.random() - 0.5) * 0.8)
+      crown2.castShadow = true
+      group.add(crown2)
+
+      this.scene.add(group)
     })
   }
 
+  // === 创建文字 Sprite ===
+  private createTextSprite(text: string, options: {
+    fontSize?: number
+    bgColor?: string
+    textColor?: string
+    padding?: number
+    borderRadius?: number
+  } = {}): THREE.Sprite {
+    const {
+      fontSize = 28,
+      bgColor = 'rgba(14,58,103,0.85)',
+      textColor = '#ffffff',
+      padding = 10,
+      borderRadius = 6,
+    } = options
+
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')!
+    ctx.font = `bold ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`
+
+    const textMetrics = ctx.measureText(text)
+    const w = Math.ceil(textMetrics.width + padding * 2)
+    const h = Math.ceil(fontSize + padding * 2)
+    canvas.width = w
+    canvas.height = h
+
+    // 背景
+    ctx.fillStyle = bgColor
+    this.roundRect(ctx, 0, 0, w, h, borderRadius)
+    ctx.fill()
+
+    // 文字
+    ctx.font = `bold ${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`
+    ctx.fillStyle = textColor
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, w / 2, h / 2)
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.minFilter = THREE.LinearFilter
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false })
+    const sprite = new THREE.Sprite(material)
+    sprite.scale.set(w / 15, h / 15, 1)
+    return sprite
+  }
+
+  private roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.lineTo(x + w - r, y)
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+    ctx.lineTo(x + w, y + h - r)
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    ctx.lineTo(x + r, y + h)
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+    ctx.lineTo(x, y + r)
+    ctx.quadraticCurveTo(x, y, x + r, y)
+    ctx.closePath()
+  }
+
+  // === 构建校园 ===
   private buildCampus(buildings: Building[]) {
-    const roomWidth = 8
-    const roomDepth = 6
-    const gap = 1
-    const floorHeight = 5
+    const roomW = 7
+    const roomD = 5.5
+    const gap = 0.5
+    const floorH = 4.5
+    const floorGap = 0.3
 
     buildings.forEach((building, bIdx) => {
-      const group = new THREE.Group()
-      group.position.set(building.position[0], 0, building.position[1])
+      const accent = ACCENT_COLORS[bIdx % ACCENT_COLORS.length]
+      const buildingGroup = new THREE.Group()
+      buildingGroup.position.set(building.position[0], 0, building.position[1])
 
-      const warmColor = BUILDING_WARM_COLORS[bIdx % BUILDING_WARM_COLORS.length]
-      const totalFloors = building.floors.length
+      const maxRoomsPerFloor = Math.max(...building.floors.map(f => f.rooms.length), 1)
+      const cols = Math.min(maxRoomsPerFloor, 3)
+      const rows = Math.ceil(maxRoomsPerFloor / cols)
 
-      // 统计最大行数用于基座尺寸
-      let maxCols = 1
-      let maxRows = 1
+      const buildingWidth = cols * (roomW + gap) + 2
+      const buildingDepth = rows * (roomD + gap) + 2
+      const totalHeight = building.floors.length * (floorH + floorGap) + 1
 
-      building.floors.forEach((floor) => {
-        const rooms = floor.rooms
-        if (!rooms.length) return
-        const cols = Math.min(rooms.length, 3)
-        const rows = Math.ceil(rooms.length / cols)
-        if (cols > maxCols) maxCols = cols
-        if (rows > maxRows) maxRows = rows
+      // === 建筑主体外壳 ===
+      const shellGeo = new THREE.BoxGeometry(buildingWidth, totalHeight, buildingDepth)
+      const shellMat = new THREE.MeshStandardMaterial({
+        color: COLORS.buildingBase,
+        roughness: 0.6,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.3,
+      })
+      const shell = new THREE.Mesh(shellGeo, shellMat)
+      shell.position.y = totalHeight / 2
+      buildingGroup.add(shell)
 
-        const baseY = (floor.level - 1) * floorHeight
+      // === 基座 ===
+      const baseGeo = new THREE.BoxGeometry(buildingWidth + 1, 0.8, buildingDepth + 1)
+      const baseMat = new THREE.MeshStandardMaterial({
+        color: accent,
+        roughness: 0.5,
+        metalness: 0.1,
+      })
+      const base = new THREE.Mesh(baseGeo, baseMat)
+      base.position.y = 0.4
+      base.receiveShadow = true
+      base.castShadow = true
+      buildingGroup.add(base)
 
-        rooms.forEach((room, rIdx) => {
-          const roomsPerRow = Math.min(rooms.length, 3)
-          const col = rIdx % roomsPerRow
-          const row = Math.floor(rIdx / roomsPerRow)
-          const offsetX = (col - (roomsPerRow - 1) / 2) * (roomWidth + gap)
-          const offsetZ = row * (roomDepth + gap)
+      // === 入口门廊 ===
+      const doorGeo = new THREE.BoxGeometry(3, 2.5, 0.3)
+      const doorMat = new THREE.MeshStandardMaterial({
+        color: 0x2a3f5c,
+        roughness: 0.4,
+        metalness: 0.2,
+      })
+      const door = new THREE.Mesh(doorGeo, doorMat)
+      door.position.set(0, 1.65, buildingDepth / 2 + 0.15)
+      buildingGroup.add(door)
+
+      // === 楼层 ===
+      building.floors.forEach((floor, fIdx) => {
+        const floorGroup = new THREE.Group()
+        const baseY = fIdx * (floorH + floorGap) + 1
+        floorGroup.position.y = baseY
+        floorGroup.userData = { buildingId: building.id, floorId: floor.id, originalY: baseY }
+
+        // 楼层底板
+        const slabGeo = new THREE.BoxGeometry(buildingWidth, 0.15, buildingDepth)
+        const slabMat = new THREE.MeshStandardMaterial({
+          color: COLORS.buildingEdge,
+          roughness: 0.7,
+        })
+        const slab = new THREE.Mesh(slabGeo, slabMat)
+        slab.position.y = 0
+        slab.receiveShadow = true
+        floorGroup.add(slab)
+
+        // 房间
+        floor.rooms.forEach((room, rIdx) => {
+          const c = rIdx % cols
+          const r = Math.floor(rIdx / cols)
+          const offsetX = (c - (cols - 1) / 2) * (roomW + gap)
+          const offsetZ = (r - (rows - 1) / 2) * (roomD + gap)
 
           // 房间主体
-          const roomGeo = new THREE.BoxGeometry(roomWidth, floorHeight, roomDepth)
-          const statusColor = this.getRoomColor(room.status)
+          const roomGeo = new THREE.BoxGeometry(roomW, floorH - 0.3, roomD)
+          const statusColor = COLORS.status[room.status]
           const roomMat = new THREE.MeshStandardMaterial({
             color: statusColor,
-            roughness: 0.5,
-            metalness: 0.15,
+            roughness: 0.4,
+            metalness: 0.1,
             transparent: true,
-            opacity: 0.85,
+            opacity: 0.88,
           })
           const roomMesh = new THREE.Mesh(roomGeo, roomMat)
-          roomMesh.position.set(offsetX, baseY + floorHeight / 2, offsetZ)
+          roomMesh.position.set(offsetX, floorH / 2, offsetZ)
           roomMesh.castShadow = true
           roomMesh.receiveShadow = true
+          roomMesh.userData.roomId = room.id
 
-          // 存储映射
           this.roomMeshMap.set(room.id, roomMesh)
           this.roomBuildingMap.set(room.id, {
             buildingId: building.id,
@@ -285,67 +465,93 @@ export class CampusScene {
             floor: floor.level,
           })
           this.roomDataMap.set(room.id, room)
-          roomMesh.userData.roomId = room.id
 
-          group.add(roomMesh)
+          floorGroup.add(roomMesh)
 
-          // 窗户发光效果
-          this.addWindows(group, offsetX, baseY, roomWidth, floorHeight, roomDepth)
+          // 窗户
+          this.addWindows(floorGroup, offsetX, floorH / 2, offsetZ, roomW, floorH - 0.3, roomD, room.status === 'busy')
         })
+
+        this.floorGroupMap.set(floor.id, floorGroup)
+        buildingGroup.add(floorGroup)
       })
 
-      // 楼宇基座
-      const baseW = maxCols * (roomWidth + gap) + 2
-      const baseD = maxRows * (roomDepth + gap) + 2
-      const baseGeo = new THREE.BoxGeometry(baseW, 0.5, baseD)
-      const baseMat = new THREE.MeshStandardMaterial({
-        color: warmColor,
-        roughness: 0.6,
-        metalness: 0.1,
+      // === 楼名标签 ===
+      const label = this.createTextSprite(building.name, {
+        fontSize: 32,
+        bgColor: `rgba(${this.hexToRgb(accent)}, 0.9)`,
+        padding: 12,
       })
-      const base = new THREE.Mesh(baseGeo, baseMat)
-      base.position.y = 0.25
-      base.receiveShadow = true
-      group.add(base)
+      label.position.set(0, totalHeight + 2.5, 0)
+      buildingGroup.add(label)
+      this.buildingLabelMap.set(building.id, label)
 
-      // 楼名标签 — 发光球
-      const labelGeo = new THREE.SphereGeometry(0.8, 8, 8)
-      const labelMat = new THREE.MeshStandardMaterial({
-        color: warmColor,
-        emissive: warmColor,
-        emissiveIntensity: 0.6,
+      // === 楼层数指示 ===
+      const floorLabel = this.createTextSprite(`${building.floors.length}F`, {
+        fontSize: 20,
+        bgColor: 'rgba(100,116,139,0.7)',
+        textColor: '#ffffff',
+        padding: 6,
       })
-      const label = new THREE.Mesh(labelGeo, labelMat)
-      label.position.y = totalFloors * floorHeight + 2
-      group.add(label)
+      floorLabel.position.set(buildingWidth / 2 + 1, totalHeight / 2, 0)
+      buildingGroup.add(floorLabel)
 
-      this.buildingMeshes.set(building.id, group)
-      this.scene.add(group)
+      this.buildingRootMap.set(building.id, buildingGroup)
+      this.scene.add(buildingGroup)
     })
   }
 
-  private addWindows(group: THREE.Group, cx: number, baseY: number, _w: number, _h: number, d: number) {
-    const windowMat = new THREE.MeshStandardMaterial({
-      color: 0xffe8a0,
-      emissive: 0xffcc44,
-      emissiveIntensity: 0.3,
-      transparent: true,
-      opacity: 0.6,
-    })
-    const winGeo = new THREE.PlaneGeometry(0.8, 0.6)
+  private hexToRgb(hex: number): string {
+    const r = (hex >> 16) & 0xff
+    const g = (hex >> 8) & 0xff
+    const b = hex & 0xff
+    return `${r},${g},${b}`
+  }
 
-    // 前面窗户
+  private addWindows(group: THREE.Group, cx: number, cy: number, cz: number, w: number, _h: number, d: number, isLit: boolean) {
+    const winColor = isLit ? COLORS.windowLit : COLORS.window
+    const winMat = new THREE.MeshStandardMaterial({
+      color: winColor,
+      roughness: 0.2,
+      metalness: 0.3,
+      transparent: true,
+      opacity: 0.7,
+    })
+    const winGeo = new THREE.PlaneGeometry(1.0, 0.8)
+
+    // 前面
     for (let i = -2; i <= 2; i++) {
       for (let j = 0; j < 2; j++) {
-        const win = new THREE.Mesh(winGeo, windowMat)
-        win.position.set(cx + i * 1.8, baseY + 1.5 + j * 2, d / 2 + 0.01)
+        const win = new THREE.Mesh(winGeo, winMat)
+        win.position.set(cx + i * 1.6, cy - 0.5 + j * 1.8, cz + d / 2 + 0.02)
         group.add(win)
       }
     }
-  }
 
-  private getRoomColor(status: RoomStatus): number {
-    return STATUS_COLORS[status] || 0x10b981
+    // 后面
+    for (let i = -2; i <= 2; i++) {
+      for (let j = 0; j < 2; j++) {
+        const win = new THREE.Mesh(winGeo, winMat)
+        win.rotation.y = Math.PI
+        win.position.set(cx + i * 1.6, cy - 0.5 + j * 1.8, cz - d / 2 - 0.02)
+        group.add(win)
+      }
+    }
+
+    // 侧面
+    for (let i = -1; i <= 1; i++) {
+      for (let j = 0; j < 2; j++) {
+        const winL = new THREE.Mesh(winGeo, winMat)
+        winL.rotation.y = -Math.PI / 2
+        winL.position.set(cx - w / 2 - 0.02, cy - 0.5 + j * 1.8, cz + i * 1.4)
+        group.add(winL)
+
+        const winR = new THREE.Mesh(winGeo, winMat)
+        winR.rotation.y = Math.PI / 2
+        winR.position.set(cx + w / 2 + 0.02, cy - 0.5 + j * 1.8, cz + i * 1.4)
+        group.add(winR)
+      }
+    }
   }
 
   // === 拾取 ===
@@ -360,20 +566,20 @@ export class CampusScene {
 
     // 清除旧 hover
     if (this.hoveredMesh) {
-      ;(this.hoveredMesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000)
+      const mat = this.hoveredMesh.material as THREE.MeshStandardMaterial
+      mat.emissive.setHex(0x000000)
       this.hoveredMesh = null
     }
 
     if (intersects.length > 0) {
       const mesh = intersects[0].object as THREE.Mesh
       this.hoveredMesh = mesh
-      ;(mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x222222)
+      const mat = mesh.material as THREE.MeshStandardMaterial
+      mat.emissive.setHex(0x333333)
       this.renderer.domElement.style.cursor = 'pointer'
 
-      // 触发 hover 回调
       if (this.onRoomHover) {
-        const roomId = mesh.userData.roomId
-        const info = this.getRoomInfoCard(roomId)
+        const info = this.getRoomInfoCard(mesh.userData.roomId)
         if (info) this.onRoomHover(info)
       }
     } else {
@@ -403,7 +609,8 @@ export class CampusScene {
       const mesh = intersects[0].object as THREE.Mesh
       const roomId = mesh.userData.roomId
       this.selectedRoomId = roomId
-      ;(mesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x334455)
+      const mat = mesh.material as THREE.MeshStandardMaterial
+      mat.emissive.setHex(0x445566)
 
       if (this.onRoomClick) {
         const info = this.getRoomInfoCard(roomId)
@@ -420,13 +627,12 @@ export class CampusScene {
     const mapping = this.roomBuildingMap.get(roomId)
     if (!room || !mapping) return null
 
-    // 计算屏幕坐标
     const mesh = this.roomMeshMap.get(roomId)
     if (!mesh) return null
 
     const worldPos = new THREE.Vector3()
     mesh.getWorldPosition(worldPos)
-    worldPos.y += 3
+    worldPos.y += 4
     const screenPos = worldPos.clone().project(this.camera)
     const rect = this.renderer.domElement.getBoundingClientRect()
     const sx = (screenPos.x * 0.5 + 0.5) * rect.width
@@ -447,12 +653,62 @@ export class CampusScene {
       status: room.status,
       screenX: sx,
       screenY: sy,
+      canBook: room.status === 'free',
+      canRepair: room.status !== 'repair',
     }
   }
 
-  // === 聚焦楼宇 ===
+  // === 建筑展开/收起 ===
+  toggleBuildingExpand(buildingId: string) {
+    const building = this.buildingRootMap.get(buildingId)
+    if (!building) return
+
+    const isExpanded = this.expandedBuildings.has(buildingId)
+    if (isExpanded) {
+      this.expandedBuildings.delete(buildingId)
+      this.collapseBuilding(buildingId)
+    } else {
+      this.expandedBuildings.add(buildingId)
+      this.expandBuilding(buildingId)
+    }
+  }
+
+  private expandBuilding(buildingId: string) {
+    const building = this.buildingRootMap.get(buildingId)
+    if (!building) return
+
+    building.traverse((child) => {
+      if (child.userData?.floorId && child.userData?.originalY !== undefined) {
+        const floorIdx = parseInt(child.userData.floorId.split('-f')[1]) - 1
+        const targetY = child.userData.originalY + floorIdx * 3
+        this.expandAnimations.set(child.userData.floorId, {
+          progress: 0,
+          target: targetY,
+        })
+      }
+    })
+
+    // 聚焦建筑
+    this.focusBuilding(buildingId)
+  }
+
+  private collapseBuilding(buildingId: string) {
+    const building = this.buildingRootMap.get(buildingId)
+    if (!building) return
+
+    building.traverse((child) => {
+      if (child.userData?.floorId && child.userData?.originalY !== undefined) {
+        this.expandAnimations.set(child.userData.floorId, {
+          progress: 0,
+          target: child.userData.originalY,
+        })
+      }
+    })
+  }
+
+  // === 聚焦建筑/房间 ===
   focusBuilding(buildingId: string) {
-    const group = this.buildingMeshes.get(buildingId)
+    const group = this.buildingRootMap.get(buildingId)
     if (!group) return
 
     const worldPos = new THREE.Vector3()
@@ -466,67 +722,208 @@ export class CampusScene {
       }
     })
 
-    this.focusStartCamPos.copy(this.camera.position)
-    this.focusStartTarget.copy(this.controls.target)
-
-    this.focusTarget = new THREE.Vector3(worldPos.x, maxY / 2, worldPos.z)
-    this.focusCameraPos = new THREE.Vector3(
-      worldPos.x + 30,
-      maxY + 15,
-      worldPos.z + 30
+    this.startFocusAnimation(
+      new THREE.Vector3(worldPos.x + 35, maxY + 20, worldPos.z + 35),
+      new THREE.Vector3(worldPos.x, maxY / 2, worldPos.z)
     )
-    this.focusProgress = 0
   }
 
-  private updateFocusAnimation() {
-    if (!this.focusTarget || !this.focusCameraPos) return
-    this.focusProgress += 0.02
-    if (this.focusProgress >= 1) {
-      this.focusProgress = 1
+  focusRoom(roomId: string, onComplete?: () => void) {
+    const mesh = this.roomMeshMap.get(roomId)
+    if (!mesh) return
+
+    const worldPos = new THREE.Vector3()
+    mesh.getWorldPosition(worldPos)
+
+    this.startFocusAnimation(
+      new THREE.Vector3(worldPos.x + 20, worldPos.y + 15, worldPos.z + 20),
+      new THREE.Vector3(worldPos.x, worldPos.y, worldPos.z),
+      onComplete
+    )
+  }
+
+  private startFocusAnimation(endCam: THREE.Vector3, endTarget: THREE.Vector3, onComplete?: () => void) {
+    this.focusState = {
+      progress: 0,
+      startCam: this.camera.position.clone(),
+      startTarget: this.controls.target.clone(),
+      endCam,
+      endTarget,
+      onComplete,
     }
-    const t = this.easeInOutCubic(this.focusProgress)
-    this.camera.position.lerpVectors(this.focusStartCamPos, this.focusCameraPos, t)
-    this.controls.target.lerpVectors(this.focusStartTarget, this.focusTarget, t)
-    if (this.focusProgress >= 1) {
-      this.focusTarget = null
-      this.focusCameraPos = null
+  }
+
+  // === 路径飞行（从当前位置到目标）===
+  flyTo(targetBuildingId: string, onComplete?: () => void) {
+    const group = this.buildingRootMap.get(targetBuildingId)
+    if (!group) return
+
+    const worldPos = new THREE.Vector3()
+    group.getWorldPosition(worldPos)
+
+    // 创建曲线路径
+    const start = this.camera.position.clone()
+    const end = new THREE.Vector3(worldPos.x + 30, 40, worldPos.z + 30)
+    const mid = new THREE.Vector3(
+      (start.x + end.x) / 2,
+      Math.max(start.y, end.y) + 30,
+      (start.z + end.z) / 2
+    )
+
+    this.pathCurve = new THREE.CatmullRomCurve3([start, mid, end])
+    this.pathProgress = 0
+
+    // 绘制路径线
+    this.clearPathLine()
+    const points = this.pathCurve.getPoints(50)
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(points)
+    const lineMat = new THREE.LineBasicMaterial({
+      color: 0x2563eb,
+      transparent: true,
+      opacity: 0.6,
+      linewidth: 2,
+    })
+    this.pathLine = new THREE.Line(lineGeo, lineMat)
+    this.scene.add(this.pathLine)
+
+    // 动画完成后的回调
+    const checkComplete = () => {
+      if (this.pathProgress >= 1) {
+        this.clearPathLine()
+        if (onComplete) onComplete()
+      } else {
+        requestAnimationFrame(checkComplete)
+      }
     }
+    requestAnimationFrame(checkComplete)
+  }
+
+  private clearPathLine() {
+    if (this.pathLine) {
+      this.scene.remove(this.pathLine)
+      this.pathLine.geometry.dispose()
+      ;(this.pathLine.material as THREE.Material).dispose()
+      this.pathLine = null
+    }
+    this.pathCurve = null
+    this.pathProgress = 0
+  }
+
+  // === 动画更新 ===
+  private updateAnimations() {
+    // 聚焦动画
+    if (this.focusState) {
+      this.focusState.progress += 0.025
+      if (this.focusState.progress >= 1) {
+        this.focusState.progress = 1
+      }
+      const t = this.easeInOutCubic(this.focusState.progress)
+      this.camera.position.lerpVectors(this.focusState.startCam, this.focusState.endCam, t)
+      this.controls.target.lerpVectors(this.focusState.startTarget, this.focusState.endTarget, t)
+
+      if (this.focusState.progress >= 1) {
+        if (this.focusState.onComplete) this.focusState.onComplete()
+        this.focusState = null
+      }
+    }
+
+    // 楼层展开动画
+    this.expandAnimations.forEach((anim, floorId) => {
+      anim.progress += 0.04
+      if (anim.progress >= 1) anim.progress = 1
+
+      const floorGroup = this.floorGroupMap.get(floorId)
+      if (floorGroup) {
+        this.easeInOutCubic(anim.progress)
+        const currentY = floorGroup.position.y
+        const targetY = anim.target
+        floorGroup.position.y = currentY + (targetY - currentY) * 0.1
+
+        // 接近目标时停止
+        if (Math.abs(floorGroup.position.y - targetY) < 0.05) {
+          floorGroup.position.y = targetY
+          if (anim.progress >= 1) {
+            this.expandAnimations.delete(floorId)
+          }
+        }
+      }
+    })
+
+    // 路径飞行
+    if (this.pathCurve && this.pathProgress < 1) {
+      this.pathProgress += 0.008
+      if (this.pathProgress > 1) this.pathProgress = 1
+      const pos = this.pathCurve.getPointAt(this.pathProgress)
+      const lookAt = this.pathCurve.getPointAt(Math.min(this.pathProgress + 0.01, 1))
+      this.camera.position.copy(pos)
+      this.controls.target.copy(lookAt)
+
+      // 淡出路径线
+      if (this.pathLine) {
+        const mat = this.pathLine.material as THREE.LineBasicMaterial
+        mat.opacity = 0.6 * (1 - this.pathProgress)
+      }
+    }
+
+    // 更新标签朝向
+    this.buildingLabelMap.forEach((label) => {
+      label.lookAt(this.camera.position)
+    })
+    this.heatLabelMap.forEach((label) => {
+      label.lookAt(this.camera.position)
+    })
   }
 
   private easeInOutCubic(t: number): number {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
   }
 
-  // === 热力层 ===
+  // === 热力层 + 数值标签 ===
   updateHeatMap(data: Map<string, number>) {
-    this.heatMapData = data
-    this.clearHeatOverlays()
+    this.clearHeatMap()
 
-    this.heatMapData.forEach((value, roomId) => {
+    data.forEach((value, roomId) => {
       const roomMesh = this.roomMeshMap.get(roomId)
       if (!roomMesh) return
 
       const color = this.heatValueToColor(value)
       const params = (roomMesh.geometry as THREE.BoxGeometry).parameters
 
+      // 热力叠加层
       const overlayGeo = new THREE.BoxGeometry(
-        params.width + 0.2,
-        params.height + 0.2,
-        params.depth + 0.2
+        params.width + 0.3,
+        params.height + 0.3,
+        params.depth + 0.3
       )
       const overlayMat = new THREE.MeshBasicMaterial({
         color,
         transparent: true,
-        opacity: Math.max(0.05, value * 0.45),
+        opacity: Math.max(0.08, value * 0.4),
         side: THREE.DoubleSide,
         depthWrite: false,
       })
       const overlay = new THREE.Mesh(overlayGeo, overlayMat)
       overlay.position.copy(roomMesh.position)
       overlay.renderOrder = 1
-
       roomMesh.parent?.add(overlay)
       this.heatOverlayMeshes.set(roomId, overlay)
+
+      // 数值标签
+      const percent = Math.round(value * 100)
+      const label = this.createTextSprite(`${percent}%`, {
+        fontSize: 18,
+        bgColor: `rgba(${this.heatColorToRgba(color, 0.85)})`,
+        textColor: '#ffffff',
+        padding: 6,
+        borderRadius: 4,
+      })
+      label.position.set(
+        roomMesh.position.x,
+        roomMesh.position.y + params.height / 2 + 1.5,
+        roomMesh.position.z
+      )
+      roomMesh.parent?.add(label)
+      this.heatLabelMap.set(roomId, label)
     })
   }
 
@@ -534,76 +931,93 @@ export class CampusScene {
     const clamped = Math.max(0, Math.min(1, value))
     if (clamped < 0.5) {
       const t = clamped / 0.5
-      const r = Math.round(0x3b + (0xea - 0x3b) * t)
-      const g = Math.round(0x82 + (0xb3 - 0x82) * t)
-      const b = Math.round(0xf6 + (0x08 - 0xf6) * t)
+      const r = Math.round(0x3b + (0xf5 - 0x3b) * t)
+      const g = Math.round(0x82 + (0x9e - 0x82) * t)
+      const b = Math.round(0xf6 + (0x0b - 0xf6) * t)
       return (r << 16) | (g << 8) | b
     } else {
       const t = (clamped - 0.5) / 0.5
-      const r = Math.round(0xea + (0xef - 0xea) * t)
-      const g = Math.round(0xb3 + (0x44 - 0xb3) * t)
-      const b = Math.round(0x08 + (0x44 - 0x08) * t)
+      const r = Math.round(0xf5 + (0xef - 0xf5) * t)
+      const g = Math.round(0x9e + (0x44 - 0x9e) * t)
+      const b = Math.round(0x0b + (0x44 - 0x0b) * t)
       return (r << 16) | (g << 8) | b
     }
   }
 
-  clearHeatMap() {
-    this.heatMapData.clear()
-    this.clearHeatOverlays()
+  private heatColorToRgba(hex: number, alpha: number): string {
+    const r = (hex >> 16) & 0xff
+    const g = (hex >> 8) & 0xff
+    const b = hex & 0xff
+    return `${r},${g},${b},${alpha}`
   }
 
-  private clearHeatOverlays() {
+  clearHeatMap() {
     this.heatOverlayMeshes.forEach((mesh) => {
       mesh.geometry.dispose()
       ;(mesh.material as THREE.Material).dispose()
       mesh.parent?.remove(mesh)
     })
     this.heatOverlayMeshes.clear()
+
+    this.heatLabelMap.forEach((label) => {
+      label.parent?.remove(label)
+      const mat = label.material as THREE.SpriteMaterial
+      mat.map?.dispose()
+      mat.dispose()
+    })
+    this.heatLabelMap.clear()
   }
 
   // === 高亮 API ===
   highlightRooms(roomIds: string[]) {
     this.highlightedIds = new Set(roomIds)
 
-    // 重置所有颜色
     this.roomMeshMap.forEach((mesh, roomId) => {
       const room = this.roomDataMap.get(roomId)
       if (!room) return
       const mat = mesh.material as THREE.MeshStandardMaterial
       if (this.highlightedIds.has(roomId)) {
-        mat.color.setHex(HIT_COLOR)
+        mat.color.setHex(COLORS.highlight)
         mat.emissive.setHex(0x112244)
         mat.opacity = 0.95
       } else {
-        mat.color.setHex(STATUS_COLORS[room.status])
+        mat.color.setHex(COLORS.status[room.status])
         mat.emissive.setHex(0x000000)
-        mat.opacity = 0.85
+        mat.opacity = 0.88
       }
     })
   }
 
-  // === 数据更新（房间状态变化后同步 3D） ===
+  // === 数据更新 ===
   updateRoomStatus(roomId: string, status: RoomStatus) {
     const mesh = this.roomMeshMap.get(roomId)
     if (!mesh) return
     const mat = mesh.material as THREE.MeshStandardMaterial
     if (!this.highlightedIds.has(roomId)) {
-      mat.color.setHex(STATUS_COLORS[status])
+      mat.color.setHex(COLORS.status[status])
     }
+    // 更新数据
+    const room = this.roomDataMap.get(roomId)
+    if (room) room.status = status
   }
 
   // === 清理 ===
   dispose() {
     cancelAnimationFrame(this.animationId)
-    this.clearHeatOverlays()
+    this.clearHeatMap()
+    this.clearPathLine()
     this.renderer.dispose()
     this.scene.traverse((obj) => {
       if ((obj as THREE.Mesh).geometry) {
-        (obj as THREE.Mesh).geometry.dispose()
+        ;(obj as THREE.Mesh).geometry.dispose()
       }
       if ((obj as THREE.Mesh).material) {
         const mat = (obj as THREE.Mesh).material as THREE.Material
-        mat.dispose()
+        if (Array.isArray(mat)) {
+          mat.forEach((m) => m.dispose())
+        } else {
+          mat.dispose()
+        }
       }
     })
   }
